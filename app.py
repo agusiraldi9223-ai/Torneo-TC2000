@@ -126,7 +126,7 @@ st.sidebar.subheader("Campeonato Interno")
 
 opcion = st.sidebar.radio(
     "Navegación",
-    ["Resumen", "Posiciones", "Lastre", "Comparativa de Tiempos", "Estadísticas", "Duelo H2H"]
+    ["Resumen", "Comparativa de Tiempos", "Lastre", "Duelo H2H", "Simulador de Campeonato"]
 )
 
 # Pilotos oficiales en tu orden exacto de columnas del Excel
@@ -216,6 +216,234 @@ if opcion == "Resumen":
                      color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
         fig.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig, use_container_width=True)
+
+        # =========================================================================
+        # 📈 GRÁFICO INTERACTIVO DE EVOLUCIÓN DE PUNTOS Y LASTRE (ESTILO F1 TV)
+        # =========================================================================
+        st.markdown("---")
+        st.subheader("📈 Evolución del Campeonato y Lastre en Vivo")
+        st.write("Pasá el mouse por encima de los nodos para ver el puntaje acumulado, el circuito, las posiciones de llegada y el lastre con el que se LARGÓ:")
+
+        try:
+            # 1. CARGAMOS LA HOJA 1 CRUDA (Estructura vertical)
+            df_hoja1_graf = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
+            
+            # Limpiamos las columnas clave para buscar los textos sin fallas
+            columna_f_graf = df_hoja1_graf.iloc[:, 5].astype(str).str.strip().str.upper()
+            
+            # Detectamos las posiciones verticales de cada bloque de carrera
+            filas_totales_fecha = columna_f_graf[columna_f_graf == "TOTAL FECHA"].index.tolist()
+            filas_lastre_acum = columna_f_graf[columna_f_graf == "LASTRE ACUMULADO"].index.tolist()
+            
+            # 🛠️ DETECTAMOS FILAS DE CARRERA 1 Y CARRERA 2 PARA SACAR LAS POSICIONES
+            filas_c1 = columna_f_graf[columna_f_graf == "C1"].index.tolist()
+            filas_c2 = columna_f_graf[columna_f_graf == "C2"].index.tolist()
+            
+            # Mapeo de columnas de pilotos en tu Hoja1
+            indices_pilotos_graf = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
+            
+            datos_evolucion_limpios = []
+            puntos_acumulados_carrera = {p: 0.0 for p in indices_pilotos_graf.keys()}
+            max_puntaje_detectado = 0.0
+            ultima_fecha_con_datos = 0
+
+            # PASO PREVIO: Detectamos cuál es la última fecha que realmente tiene puntos cargados
+            for idx, fila_total in enumerate(filas_totales_fecha):
+                tiene_datos_esta_fecha = False
+                for piloto, col_idx in indices_pilotos_graf.items():
+                    val_puntos = df_hoja1_graf.iloc[fila_total, col_idx]
+                    if pd.notna(val_puntos) and float(str(val_puntos).replace(',','.',1)) > 0:
+                        tiene_datos_esta_fecha = True
+                if tiene_datos_esta_fecha:
+                    ultima_fecha_con_datos = idx + 1
+
+            # 2. PROCESAMOS SÓLO HASTA LA ÚLTIMA FECHA DISPUTADA
+            for idx, fila_total in enumerate(filas_totales_fecha[:ultima_fecha_con_datos]):
+                nombre_fecha_eje_x = f"Fecha {idx + 1}"
+                
+                # Extraemos el nombre real del circuito desde la lista inteligente de la línea 32
+                try:
+                    circuito_real = opciones_fechas_combinadas[idx + 1].split(" - ")[1]
+                except:
+                    circuito_real = f"Carrera {idx + 1}"
+                
+                for piloto, col_idx in indices_pilotos_graf.items():
+                    # Extraemos los puntos sumados en ESTA fecha en particular y los acumulamos
+                    val_puntos_fecha = df_hoja1_graf.iloc[fila_total, col_idx]
+                    puntos_fecha_limpio = str(val_puntos_fecha).replace(',', '.', 1) if pd.notna(val_puntos_fecha) else "0.0"
+                    puntos_fecha = float(puntos_fecha_limpio) if puntos_fecha_limpio.replace('.','',1).isdigit() else 0.0
+                    
+                    puntos_acumulados_carrera[piloto] += puntos_fecha
+                    
+                    # Registramos el puntaje más alto del torneo para la escala posterior
+                    if puntos_acumulados_carrera[piloto] > max_puntaje_detectado:
+                        max_puntaje_detectado = puntos_acumulados_carrera[piloto]
+                    
+                    # 🛠️ EXTRACCIÓN AUTOMÁTICA DE POSICIONES DE LLEGADA (C1 y C2)
+                    pos_c1 = "-"
+                    pos_c2 = "-"
+                    if idx < len(filas_c1):
+                        val_c1 = df_hoja1_graf.iloc[filas_c1[idx], col_idx]
+                        if pd.notna(val_c1): pos_c1 = f"P{int(float(str(val_c1).replace(',','.',1)))}"
+                    if idx < len(filas_c2):
+                        val_c2 = df_hoja1_graf.iloc[filas_c2[idx], col_idx]
+                        if pd.notna(val_c2): pos_c2 = f"P{int(float(str(val_c2).replace(',','.',1)))}"
+                    
+                    resultado_txt = f"{pos_c1} / {pos_c2}"
+
+                    # Lógica de desfase requerida para el lastre con el que se LARGÓ
+                    lastre_txt = "0 Kg"
+                    if idx > 0:
+                        idx_bloque_anterior = idx - 1
+                        if idx_bloque_anterior < len(filas_lastre_acum):
+                            fila_lastre_anterior = filas_lastre_acum[idx_bloque_anterior]
+                            val_lastre = df_hoja1_graf.iloc[fila_lastre_anterior, col_idx]
+                            if pd.notna(val_lastre):
+                                lastre_limpio = str(val_lastre).upper().replace("KG", "").strip()
+                                lastre_txt = f"{lastre_limpio} Kg"
+                    
+                    datos_evolucion_limpios.append({
+                        "Piloto": piloto,
+                        "Gran Premio": nombre_fecha_eje_x,
+                        "Puntos Acumulados": puntos_acumulados_carrera[piloto],
+                        "Circuito": circuito_real,
+                        "Resultado": resultado_txt,
+                        "LastreInicial": lastre_txt
+                    })
+
+            if datos_evolucion_limpios:
+                df_melted_evolucion = pd.DataFrame(datos_evolucion_limpios)
+
+                # 3. DISEÑAMOS EL GRÁFICO INTERACTIVO
+                fig_evolucion = px.line(
+                    df_melted_evolucion, 
+                    x="Gran Premio", 
+                    y="Puntos Acumulados", 
+                    color="Piloto",
+                    template="plotly_dark",
+                    markers=True,
+                    # Pasamos todas las variables para usarlas en la tarjeta flotante
+                    custom_data=["Circuito", "Resultado", "LastreInicial", "Piloto"]
+                )
+
+                # 🛠️ TARJETA FLOTANTE ACTUALIZADA CON POSICIONES DE LLEGADA
+                fig_evolucion.update_traces(
+                    line=dict(width=3.5), 
+                    marker=dict(size=8),
+                    hovertemplate="<br>".join([
+                        "🏎️ <b>Piloto:</b> %{customdata[3]}",
+                        "📍 <b>Circuito:</b> %{customdata[0]}",
+                        "🏁 <b>Resultado (C1/C2):</b> %{customdata[1]}",
+                        "🏆 <b>Puntos Acumulados:</b> %{y:.2f} pts",
+                        "⚖️ <b>Lastre de Largada:</b> %{customdata[2]}"
+                    ])
+                )
+
+                # Techo exacto de la escala (+25 puntos del máximo)
+                techo_escala_y = float(max_puntaje_detectado) + 25.0
+
+                fig_evolucion.update_layout(
+                    hovermode="closest",
+                    plot_bgcolor="#1a1c23",
+                    paper_bgcolor="#0e1117",
+                    xaxis=dict(title="Progreso del Torneo"),
+                    yaxis=dict(
+                        title="Puntuación General", 
+                        range=[0, techo_escala_y], 
+                        autorange=False,
+                        dtick=30  
+                    ),
+                    legend=dict(
+                        title=dict(text="<b>PILOTOS</b>", font=dict(color="#ff1801", size=13)),
+                        font=dict(color="#ffffff", size=12),
+                        bgcolor="rgba(0,0,0,0)",
+                        bordercolor="rgba(0,0,0,0)"
+                    ),
+                    margin=dict(l=20, r=20, t=20, b=20),
+                    height=470
+                )
+
+                st.plotly_chart(fig_evolucion, use_container_width=True)
+            else:
+                st.warning("⚠️ No se pudieron procesar bloques de carreras válidos en la pestaña 'Hoja1'.")
+
+        except Exception as e:
+            st.error(f"No se pudo compilar el gráfico dinámico desde la Hoja1: {e}")
+
+
+            if columnas_carreras:
+                # Transformamos la tabla de puntos a formato largo para Plotly
+                df_melted_evolucion = df_puntos_graf.melt(
+                    id_vars=["PILOTO"], 
+                    value_vars=columnas_carreras, 
+                    var_name="Gran Premio", 
+                    value_name="Puntos"
+                )
+
+                # 3. CRUCE MATEMÁTICO: Inyectar el Lastre correspondiente a cada Fecha y Piloto
+                lastres_calculados = []
+                for _, fila in df_melted_evolucion.iterrows():
+                    piloto_actual = fila["PILOTO"]
+                    gp_actual = fila["Gran Premio"]
+                    
+                    try:
+                        import re
+                        num_fecha = int(re.findall(r'\d+', gp_actual)[0]) - 1
+                        
+                        if num_fecha < len(filas_lastre_acum):
+                            fila_excel_lastre = filas_lastre_acum[num_fecha]
+                            col_excel_piloto = indices_pilotos_lastre.get(piloto_actual)
+                            
+                            if col_excel_piloto is not None:
+                                val_lastre = df_hoja1_graf.iloc[fila_excel_lastre, col_excel_piloto]
+                                peso_kg = float(val_lastre) if pd.notna(val_lastre) else 0.0
+                                lastres_calculados.append(f"{peso_kg:.1f} Kg")
+                            else:
+                                lastres_calculados.append("0.0 Kg")
+                        else:
+                            lastres_calculados.append("0.0 Kg")
+                    except:
+                        lastres_calculados.append("0.0 Kg")
+
+                df_melted_evolucion["Lastre"] = lastres_calculados
+
+                # 4. CREAR EL GRÁFICO INTERACTIVO CON HOVER CUSTOMIZADO
+                fig_evolucion = px.line(
+                    df_melted_evolucion, 
+                    x="Gran Premio", 
+                    y="Puntos", 
+                    color="PILOTO",
+                    template="plotly_dark",
+                    markers=True,
+                    custom_data=["Lastre", "PILOTO"]
+                )
+
+                fig_evolucion.update_traces(
+                    line=dict(width=3.5), 
+                    marker=dict(size=8),
+                    hovertemplate="<br>".join([
+                        "🏎️ <b>Piloto:</b> %{customdata[1]}",
+                        "🏁 <b>Carrera:</b> %{x}",
+                        "🏆 <b>Puntos Acumulados:</b> %{y} pts",
+                        "⚖️ <b>Lastre Técnico:</b> %{customdata[0]}"
+                    ])
+                )
+
+                fig_evolucion.update_layout(
+                    hovermode="closest",
+                    plot_bgcolor="#1a1c23",
+                    paper_bgcolor="#0e1117",
+                    margin=dict(l=20, r=20, t=20, b=20),
+                    height=450
+                )
+
+                st.plotly_chart(fig_evolucion, use_container_width=True)
+            else:
+                st.warning("⚠️ No se detectaron columnas de fechas individuales en la pestaña 'Tabla Final' para armar el gráfico.")
+
+        except Exception as e:
+            st.error(f"No se pudo procesar la telemetría del gráfico: {e}")
+
 elif opcion == "Comparativa de Tiempos":
     st.title("⏱️ Diferencia de Ritmo y Poles (Histórico vs Fecha)")
     st.write("Análisis estadístico milimétrico basado en tu pestaña 'Carga Tiempos'")
@@ -364,93 +592,157 @@ elif opcion == "Comparativa de Tiempos":
                 st.warning(f"La {fecha_tiempos_sel} aún no tiene datos cargados en el Excel.")
 
 elif opcion == "Lastre":
-    st.title("⚖️ Control de Lastre Oficial")
-    st.write("Historial y penalizaciones por kilogramos en pista según reglamento TC2000.")
+    st.title("⚖️ Sistema de Lastre Técnico")
+    st.write("Consulta el peso acumulado en pista y el rendimiento de los pilotos con lastre.")
 
     if os.path.exists(ARCHIVO_EXCEL):
         try:
-            # Leemos la Hoja1 de forma nativa sin procesar encabezados
-            df_hoja1 = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
+            # 1. LEER LAS PLANILLAS DE FORMA SEGURA
+            df_hoja1_sim = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
+            columna_f_sim = df_hoja1_sim.iloc[:, 5].astype(str).str.strip().str.upper()
             
-            # Convertimos la columna F (índice 5) a texto limpio para buscar las filas clave
-            columna_f = df_hoja1.iloc[:, 5].astype(str).str.strip().str.upper()
-            
-            # Encontramos TODAS las filas del Excel que contienen "LASTRE FECHA" y "LASTRE ACUMULADO"
-            filas_lastre_fecha = columna_f[columna_f == "LASTRE FECHA"].index.tolist()
-            filas_lastre_acum = columna_f[columna_f == "LASTRE ACUMULADO"].index.tolist()
-            
-            # Mapeo exacto de columnas de pilotos en la Hoja1: G=Agus(6), I=Pablo(8), K=Juandi(10), M=Eze(12)
-            indices_pilotos_lastre = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
-            
-            # El selector va a tener tantas Fechas como bloques tengas cargados en el Excel
-            total_fechas_detectadas = len(filas_lastre_fecha)
-            if total_fechas_detectadas > 0:
+            df_puntos_aux = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Tabla Final', engine='openpyxl')
+            df_puntos_aux.columns = [str(c).strip() for c in df_puntos_aux.columns]
+
+            # Mapeo de columnas oficiales de pilotos en tu Hoja1
+            indices_pilotos_hoja1 = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
+            pilotos_torneo = list(indices_pilotos_hoja1.keys())
+
+            # Detectamos cuántas fechas se corrieron realmente leyendo la Tabla Final de puntos
+            columnas_fechas_reales = [col for col in df_puntos_aux.columns if str(col).strip().upper().startswith("FECHA")]
+            ultima_fecha_real_num = 0
+            for idx_f, col_f in enumerate(columnas_fechas_reales):
+                if df_puntos_aux[col_f].astype(float).sum() > 0:
+                    ultima_fecha_real_num = idx_f + 1
+            if ultima_fecha_real_num == 0:
+                ultima_fecha_real_num = 7
+
+            filas_lastre_fecha_real = columna_f_sim[columna_f_sim.str.contains("LASTRE FECHA|LASTRE.*FECHA", na=False)].index.tolist()
+            filas_lastre_acum_real = columna_f_sim[columna_f_sim.str.contains("LASTRE ACUMULADO|LASTRE.*ACUM", na=False)].index.tolist()
+
+            # -----------------------------------------------------------------
+            # 📋 ACÁ ABAJO CONTINÚA TU LÓGICA ORIGINAL DE LAS TARJETAS DE KILOS
+            # -----------------------------------------------------------------
+            if len(filas_lastre_fecha_real) > 0:
+                total_fechas_detectadas = len(filas_lastre_fecha_real)
                 opciones_lastre_dinamicas = [opt for opt in opciones_fechas_combinadas if opt != "Campeonato Completo"][:total_fechas_detectadas]
                 fecha_sel = st.selectbox("Seleccionar Fecha para Consultar Lastre Técnico:", opciones_lastre_dinamicas)
                 
-                # 🛠️ EXTRACCIÓN INFALIBLE: Sacamos solo el número sin que le afecte el nombre del circuito
-                import re
-                numeros_encontrados = re.findall(r'\d+', str(fecha_sel))
-        # 🛠️ EXTRAE EL NÚMERO DE FORMA INFALIBLE
                 import re
                 numeros_encontrados = re.findall(r'\d+', str(fecha_sel))
                 idx_fecha_sel = int(numeros_encontrados[0]) - 1 if numeros_encontrados else 0
-        
-        # [AQUÍ ABAJO DEBE CONTINUAR TU LÓGICA ORIGINAL DE LA TABLA: tabla_lastre = [] ]
 
-                tabla_lastre = []
                 
-                for piloto, col_idx in indices_pilotos_lastre.items():
-                    # 1. LASTRE GENERADO EN LA FECHA ACTUAL
-                    # Vamos directo a la fila "LASTRE FECHA" de la fecha seleccionada
-                    fila_generado = filas_lastre_fecha[idx_fecha_sel]
-                    val_actual = str(df_hoja1.iloc[fila_generado, col_idx]).upper().replace("KG", "").strip()
-                    lastre_generado_en_fecha = pd.to_numeric(val_actual, errors='coerce')
-                    if pd.isna(lastre_generado_en_fecha): lastre_generado_en_fecha = 0.0
-                    
-                    # 2. LASTRE CON EL QUE SE CORRIÓ LA FECHA
-                    # Es el "LASTRE ACUMULADO" del bloque de la fecha ANTERIOR.
-                    if idx_fecha_sel > 0:
-                        fila_acum_anterior = filas_lastre_acum[idx_fecha_sel - 1]
-                        val_anterior = str(df_hoja1.iloc[fila_acum_anterior, col_idx]).upper().replace("KG", "").strip()
-                        lastre_con_el_que_se_corrio = pd.to_numeric(val_anterior, errors='coerce')
-                        if pd.isna(lastre_con_el_que_se_corrio): lastre_con_el_que_se_corrio = 0.0
-                    else:
-                        lastre_con_el_que_se_corrio = 0.0  # En la Fecha 1 todos largan limpios con 0 kg
-                    
+                # Armamos la tabla para renderizar los kilos en pista actuales
+                tabla_lastre = []
+                fila_pista = filas_lastre_acum_real[idx_fecha_sel] if idx_fecha_sel < len(filas_lastre_acum_real) else None
+                fila_generado = filas_lastre_fecha_real[idx_fecha_sel] if idx_fecha_sel < len(filas_lastre_fecha_real) else None
+                
+                for p in pilotos_torneo:
+                    col_idx = indices_pilotos_hoja1[p]
+                    k_pista = df_hoja1_sim.iloc[fila_pista, col_idx] if fila_pista else 0
+                    k_gen = df_hoja1_sim.iloc[fila_generado, col_idx] if fila_generado else 0
                     tabla_lastre.append({
-                        "Piloto": piloto,
-                        "Lastre en Pista (kg)": f"{int(lastre_con_el_que_se_corrio)} kg",
-                        "Lastre Generado (kg)": f"+{int(lastre_generado_en_fecha)} kg" if lastre_generado_en_fecha > 0 else "0 kg",
-                        "Orden_Visual": lastre_con_el_que_se_corrio
+                        "Piloto": p,
+                        "Lastre en Pista (kg)": float(str(k_pista).upper().replace("KG","").strip()) if pd.notna(k_pista) else 0.0,
+                        "Lastre Generado (kg)": float(str(k_gen).upper().replace("KG","").strip()) if pd.notna(k_gen) else 0.0
                     })
                 
-                # Ordenamos de mayor a menor peso en pista para las tarjetas
-                df_lastre_render = pd.DataFrame(tabla_lastre).sort_values(by="Orden_Visual", ascending=False)
+                df_lastre_render = pd.DataFrame(tabla_lastre)
                 
-                st.subheader(f"📊 Estado de Penalizaciones — {fecha_sel}")
-                
-                # Renderizado de Tarjetas F1
-                cols_cards = st.columns(4)
-                for i, (_, row) in enumerate(df_lastre_render.iterrows()):
+                # Dibujamos las tarjetas individuales arriba
+                cols_cards = st.columns(len(pilotos_torneo))
+                for i, row in enumerate(df_lastre_render.iterrows()):
                     with cols_cards[i % 4]:
-                        st.markdown(f"""
-                        <div class="metric-box">
-                           <h4 style='margin:0; color:#e10600;'>{row['Piloto']}</h4>
-                           <p style='margin:5px 0 0 0; font-size:24px; font-weight:bold;'>{row['Lastre en Pista (kg)']}</p>
-                           <small style='color:#aaa;'>Generó en carrera: {row['Lastre Generado (kg)']}</small>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        st.metric(label=f"Auto de {row[1]['Piloto']}", value=f"{row[1]['Lastre en Pista (kg)']} Kg", delta=f"+{row[1]['Lastre Generado (kg)']} Kg ganados")
                 
-                st.markdown("---")
-                st.dataframe(df_lastre_render[["Piloto", "Lastre en Pista (kg)", "Lastre Generado (kg)"]], use_container_width=True, hide_index=True)
+             
             else:
-                st.warning("No se detectaron las filas de 'Lastre Fecha' en la 'Hoja1'. Revisá que estén escritas exactamente igual.")
-                
+                st.warning("No se detectaron las filas de 'Lastre Fecha' en la 'Hoja1'.")
+
+            # =========================================================================
+            # 🏋️ MAPA VISUAL DE EFECTIVIDAD POR PESO (ESTILO F1 TV - SIN TABLAS)
+            # =========================================================================
+            st.markdown("---")
+            st.subheader("🏋️ Análisis de Rendimiento con Lastre Técnico")
+            st.write("Evaluación histórica del promedio de puntos sumados y la cantidad de fechas disputadas en cada rango de peso:")
+
+            rangos_peso = ["0-20 Kg", "21-40 Kg", "41-60 Kg", "61-80 Kg+"]
+            historial_peso_puntos = {p: {r: [] for r in rangos_peso} for p in pilotos_torneo}
+
+            for idx_c, fila_total in enumerate(filas_lastre_fecha_real[:ultima_fecha_real_num]):
+                for piloto, col_idx in indices_pilotos_hoja1.items():
+                    val_puntos = df_hoja1_sim.iloc[fila_total, col_idx]
+                    puntos_limpios = str(val_puntos).replace(',', '.', 1) if pd.notna(val_puntos) else "0.0"
+                    pts_fecha = float(puntos_limpios) if puntos_limpios.replace('.','',1).isdigit() else 0.0
+                    
+                    kilos_largada = 0.0
+                    if idx_c > 0:
+                        idx_bloque_anterior = idx_c - 1
+                        if idx_bloque_anterior < len(filas_lastre_acum_real):
+                            fila_lastre_anterior = filas_lastre_acum_real[idx_bloque_anterior]
+                            val_lastre = df_hoja1_sim.iloc[fila_lastre_anterior, col_idx]
+                            if pd.notna(val_lastre):
+                                kilos_largada = float(str(val_lastre).upper().replace("KG","").strip())
+
+                    if kilos_largada <= 20.0: rango_elegido = "0-20 Kg"
+                    elif kilos_largada <= 40.0: rango_elegido = "21-40 Kg"
+                    elif kilos_largada <= 60.0: rango_elegido = "41-60 Kg"
+                    else: rango_elegido = "61-80 Kg+"
+                        
+                    historial_peso_puntos[piloto][rango_elegido].append(pts_fecha)
+
+            estilos_mapa_peso = """
+            <style>
+            .contenedor-peso { background-color: #1a1c23; border-top: 4px solid #ff1801; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 2px 2px 10px rgba(0,0,0,0.4); }
+            .titulo-peso { color: #ff1801; font-size: 16px; font-weight: bold; text-align: center; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+            .fila-piloto-peso { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #2d313f; }
+            .fila-piloto-peso:last-child { border-bottom: none; }
+            .nombre-piloto-peso { color: #ffffff; font-weight: 500; font-size: 14px; }
+            .datos-piloto-peso { text-align: right; }
+            .pts-peso { color: #ffffff; font-weight: bold; font-size: 15px; font-family: 'monospace'; }
+            .carreras-peso { color: #8a8d9a; font-size: 11px; display: block; }
+            </style>
+            """
+            st.markdown(estilos_mapa_peso, unsafe_allow_html=True)
+            columnas_rangos = st.columns(4)
+
+            for idx_rango, rango in enumerate(rangos_peso):
+                with columnas_rangos[idx_rango]:
+                    html_bloque = '<div class="contenedor-peso">'
+                    html_bloque += '<div class="titulo-peso">📦 ' + str(rango) + '</div>'
+                    
+                    tabla_pilotos_rango = []
+                    for piloto in pilotos_torneo:
+                        lista_puntos = historial_peso_puntos[piloto][rango]
+                        cant_fechas = len(lista_puntos)
+                        if cant_fechas > 0:
+                            promedio = sum(lista_puntos) / cant_fechas
+                            txt_fechas = f"en {cant_fechas} GP" if cant_fechas > 1 else "en 1 GP"
+                            tabla_pilotos_rango.append({"nombre": piloto, "promedio": promedio, "txt_pts": f"{promedio:.1f} pts", "txt_fechas": txt_fechas})
+                        else:
+                            tabla_pilotos_rango.append({"nombre": piloto, "promedio": -1.0, "txt_pts": "-", "txt_fechas": "0 GP"})
+                    
+                    tabla_pilotos_rango = sorted(tabla_pilotos_rango, key=lambda x: x["promedio"], reverse=True)
+                    for p_data in tabla_pilotos_rango:
+                        html_bloque += '<div class="fila-piloto-peso">'
+                        html_bloque += '    <span class="nombre-piloto-peso">🏎️ ' + str(p_data["nombre"]) + '</span>'
+                        html_bloque += '    <div class="datos-piloto-peso">'
+                        html_bloque += '        <span class="pts-peso">' + str(p_data["txt_pts"]) + '</span>'
+                        html_bloque += '        <span class="carreras-peso">' + str(p_data["txt_fechas"]) + '</span>'
+                        html_bloque += '    </div>'
+                        html_bloque += '</div>'
+                    
+                    html_bloque += '</div>'
+                    st.markdown(html_bloque, unsafe_allow_html=True)
+
+            st.info("💡 **Análisis de Telemetría:** Las tarjetas ordenan automáticamente a los pilotos de mayor a menor efectividad dentro de cada rango de plomo.")
+
         except Exception as e:
             st.error(f"Error al calcular el lastre desde el Excel: {e}")
     else:
         st.warning(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")
+
 elif opcion == "Posiciones":
     st.title("🏆 Centro de Cómputos del Campeonato")
     st.write("Análisis interactivo de puntajes por fecha y evolución de la tabla general.")
@@ -882,3 +1174,331 @@ elif opcion == "Duelo H2H":
                     
         else:
             st.error("❌ No se encontraron las columnas exactas 'PILOTO' o 'PTS' en la pestaña 'Tabla Final'.")
+elif opcion == "Simulador de Campeonato":
+    st.title("🔮 Simulador y Proyecciones del Campeonato")
+    st.write("Calculadora matemática de título multi-fecha y evolución del lastre técnico en vivo.")
+
+    # 1. CARGA DE DATOS SEGURA DESDE AMBAS PESTAÑAS
+    try:
+        df_puntos_sim = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Tabla Final', engine='openpyxl')
+        df_puntos_sim.columns = [str(c).strip() for c in df_puntos_sim.columns]
+        
+        df_hoja1_sim = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
+        columna_f_sim = df_hoja1_sim.iloc[:, 5].astype(str).str.strip().str.upper()
+    except Exception as e:
+        st.error(f"❌ No se pudo cargar la base de datos para el simulador: {e}")
+        df_puntos_sim = None
+
+    if df_puntos_sim is not None and df_hoja1_sim is not None:
+        df_puntos_sim = df_puntos_sim.dropna(subset=["PILOTO"])
+        pilotos_torneo = sorted(df_puntos_sim["PILOTO"].unique())
+        indices_pilotos_hoja1 = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
+
+        # ---------------------------------------------------------------------
+        # 📊 DETECCIÓN REAL DE FECHAS DISPUTADAS BASADO EN PUNTOS
+        # ---------------------------------------------------------------------
+        columnas_fechas_reales = [col for col in df_puntos_sim.columns if str(col).strip().upper().startswith("FECHA")]
+        ultima_fecha_real_num = 0
+        
+        for idx, col_f in enumerate(columnas_fechas_reales):
+            if df_puntos_sim[col_f].astype(float).sum() > 0:
+                ultima_fecha_real_num = idx + 1
+
+        if ultima_fecha_real_num == 0:
+            ultima_fecha_real_num = 7
+
+        filas_lastre_fecha_real = columna_f_sim[columna_f_sim.str.contains("LASTRE FECHA|LASTRE.*FECHA", na=False)].index.tolist()
+        filas_lastre_acum_real = columna_f_sim[columna_f_sim.str.contains("LASTRE ACUMULADO|LASTRE.*ACUM", na=False)].index.tolist()
+        
+        historial_generado_por_piloto = {p: [] for p in pilotos_torneo}
+        lastre_inicial_proyeccion = {p: 0.0 for p in pilotos_torneo}
+        puntos_reales_actuales = {p: 0.0 for p in pilotos_torneo}
+
+        for p in pilotos_torneo:
+            fila_p = df_puntos_sim[df_puntos_sim["PILOTO"] == p]
+            # 🛠️ CORRECCIÓN QUIRÚRGICA: Agregamos [0] para extraer el escalar numérico de la matriz de NumPy
+            puntos_reales_actuales[p] = float(fila_p["PTS"].values[0]) if not fila_p.empty else 0.0
+            
+            col_idx = indices_pilotos_hoja1.get(p, 6)
+            
+            for i in range(min(ultima_fecha_real_num, len(filas_lastre_fecha_real))):
+                f_idx = filas_lastre_fecha_real[i]
+                val = df_hoja1_sim.iloc[f_idx, col_idx]
+                peso = float(str(val).upper().replace("KG","").strip()) if pd.notna(val) and str(val).strip() != "" else 0.0
+                historial_generado_por_piloto[p].append(peso)
+            
+            if len(filas_lastre_acum_real) >= ultima_fecha_real_num:
+                f_acum_idx = filas_lastre_acum_real[ultima_fecha_real_num - 1]
+                val_ultimo_acum = df_hoja1_sim.iloc[f_acum_idx, col_idx]
+                lastre_inicial_proyeccion[p] = float(str(val_ultimo_acum).upper().replace("KG","").strip()) if pd.notna(val_ultimo_acum) and str(val_ultimo_acum).strip() != "" else 0.0
+
+        # ---------------------------------------------------------------------
+        # 🎛️ CONTROLES INTERACTIVOS DE PROYECCIÓN MULTI-FECHA
+        # ---------------------------------------------------------------------
+        st.markdown("---")
+        st.subheader("🏁 Configuración de la Proyección Futura")
+        st.write(f"📢 Campeonato actual procesado hasta la **Fecha {ultima_fecha_real_num}**. Podés simular las fechas restantes:")
+        
+        fechas_restantes_max = max(1, 10 - ultima_fecha_real_num)
+        cant_fechas_a_proyectar = st.number_input(f"¿Cuántas fechas querés proyectar hacia adelante? (Quedan {fechas_restantes_max} para llegar a la 10)", min_value=1, max_value=int(fechas_restantes_max), value=1, step=1)
+        
+        escala_c1 = {1: 25, 2: 18, 3: 15, 4: 12}
+        escala_c2 = {pos: pts * 0.75 for pos, pts in escala_c1.items()}
+
+        escala_generado_lastre = {1: 40.0, 2: 20.0, 3: 10.0, 4: 0.0}
+
+        puntos_simulados_acum = puntos_reales_actuales.copy()
+        lastre_actual_simulado = lastre_inicial_proyeccion.copy()
+        historial_generado_simulado = {p: list(historial_generado_por_piloto[p]) for p in pilotos_torneo}
+
+        for f_futura in range(cant_fechas_a_proyectar):
+            num_fecha_actual_sim = ultima_fecha_real_num + f_futura + 1
+            st.markdown(f"### 📅 Simular Fecha {num_fecha_actual_sim}")
+            
+            st.write(f"**⚖️ Telemetría Inicial para la Fecha {num_fecha_actual_sim}:**")
+            cols_kilos = st.columns(len(pilotos_torneo))
+            for i, p in enumerate(pilotos_torneo):
+                with cols_kilos[i]:
+                    pts_actuales_piloto = puntos_simulados_acum[p]
+                    st.metric(
+                        label=f"Auto de {p}", 
+                        value=f"{lastre_actual_simulado[p]:.1f} Kg",
+                        delta=f"{pts_actuales_piloto:.2f} pts iniciales",
+                        delta_color="off"
+                    )
+
+            col_c1, col_c2 = st.columns(2)
+            posiciones_f_c1 = {}
+            posiciones_f_c2 = {}
+
+            with col_c1:
+                st.markdown(f"🔺 **Carrera 1 - Fecha {num_fecha_actual_sim}**")
+                for piloto in pilotos_torneo:
+                    pos_c1 = st.selectbox(
+                        f"{piloto} - Posición C1:", options=[1, 2, 3, 4], 
+                        index=pilotos_torneo.index(piloto) % 4, 
+                        key=f"c1_f{num_fecha_actual_sim}_{piloto}"
+                    )
+                    posiciones_f_c1[piloto] = pos_c1
+
+            with col_c2:
+                st.markdown(f"🔻 **Carrera 2 - Fecha {num_fecha_actual_sim}**")
+                for piloto in pilotos_torneo:
+                    pos_c2 = st.selectbox(
+                        f"{piloto} - Posición C2:", options=[1, 2, 3, 4], 
+                        index=(pilotos_torneo.index(piloto) + 1) % 4, 
+                        key=f"c2_f{num_fecha_actual_sim}_{piloto}"
+                    )
+                    posiciones_f_c2[piloto] = pos_c2
+
+            puntos_ganados_esta_fecha = {}
+            for piloto in pilotos_torneo:
+                pts_f = escala_c1.get(posiciones_f_c1[piloto], 0) + escala_c2.get(posiciones_f_c2[piloto], 0)
+                puntos_ganados_esta_fecha[piloto] = pts_f
+                puntos_simulados_acum[piloto] += pts_f
+
+            pilotos_ordenados_fecha = sorted(puntos_ganados_esta_fecha, key=puntos_ganados_esta_fecha.get, reverse=True)
+            
+            for rango_pos, piloto in enumerate(pilotos_ordenados_fecha):
+                posicion_final_fecha = rango_pos + 1
+                kilos_generados_hoy = escala_generado_lastre.get(posicion_final_fecha, 0.0)
+                
+                historial_generado_simulado[piloto].append(kilos_generados_hoy)
+                
+                idx_actual_historial = len(historial_generado_simulado[piloto]) - 1
+                idx_a_restar = idx_actual_historial - 2
+                
+                kilos_a_restar_tres_atras = 0.0
+                if idx_a_restar >= 0 and idx_a_restar < len(historial_generado_simulado[piloto]):
+                    kilos_a_restar_tres_atras = historial_generado_simulado[piloto][idx_a_restar]
+                
+                nuevo_lastre_calculado = lastre_actual_simulado[piloto] + kilos_generados_hoy - kilos_a_restar_tres_atras
+                lastre_actual_simulado[piloto] = max(0.0, nuevo_lastre_calculado)
+
+            st.markdown("---")
+
+        # ---------------------------------------------------------------------
+        # 📊 RENDIMIENTO Y TABLA FINAL DE LA PROYECCIÓN COMPLETA
+        # ---------------------------------------------------------------------
+        st.subheader(f"🏆 Resultado de la Proyección General (Luego de {cant_fechas_a_proyectar} Fechas Simuladas)")
+        
+        tabla_proyeccion_final = []
+        for piloto in pilotos_torneo:
+            pts_reales_iniciales = puntos_reales_actuales[piloto]
+            pts_totales_proyectados = puntos_simulados_acum[piloto]
+            
+            tabla_proyeccion_final.append({
+                "Piloto": piloto,
+                "Pts Sumados Simulación": pts_totales_proyectados - pts_reales_iniciales,
+                "Puntos Finales Proyectados": pts_totales_proyectados,
+                "Lastre Próxima Fecha": lastre_actual_simulado[piloto]
+            })
+
+        df_proyeccion_final = pd.DataFrame(tabla_proyeccion_final).sort_values(by="Puntos Finales Proyectados", ascending=False)
+        df_proyeccion_final = df_proyeccion_final.reset_index(drop=True)
+
+        lider_real = max(puntos_reales_actuales, key=puntos_reales_actuales.get)
+        lider_proyectado = df_proyeccion_final.loc[0, "Piloto"]
+        puntos_lider_proy = df_proyeccion_final.loc[0, "Puntos Finales Proyectados"]
+
+        if lider_real != lider_proyectado:
+            segundo_proy_puntos = df_proyeccion_final.loc[1, "Puntos Finales Proyectados"] if len(df_proyeccion_final) > 1 else puntos_lider_proy
+            st.error(f"🔥 ¡CAMBIO DE CORONA EN LA PROYECCIÓN! Al cabo de las fechas simuladas, **{lider_proyectado}** se consagraría líder del campeonato superando al escolta por {(puntos_lider_proy - segundo_proy_puntos):.2f} pts.")
+        else:
+            st.success(f"👑 ¡Automático! **{lider_proyectado}** resiste la presión y mantiene la punta del campeonato con un total proyectado de {puntos_lider_proy:.2f} pts.")
+
+        # =========================================================================
+        # 🧮 CALCULADORA MATEMÁTICA DE TÍTULO ACTUALIZADA AL 75% (46.75 PTS MAX)
+        # =========================================================================
+        st.markdown("---")
+        st.subheader("🧮 Calculadora de Título Matemática")
+
+        fecha_final_simulada_num = ultima_fecha_real_num + cant_fechas_a_proyectar
+        fechas_restantes_campeonato = max(0, 10 - fecha_final_simulada_num)
+        
+        # 🛠️ REGLAMENTO OFICIAL ACTUALIZADO: 25 (C1) + 18.75 (C2) + 1 (Pole) + 1 (VR C1) + 1 (VR C2) = 46.75 pts
+        puntos_maximos_por_fecha = 46.75
+        puntos_en_juego_totales = fechas_restantes_campeonato * puntos_maximos_por_fecha
+
+        if fechas_restantes_campeonato > 0:
+            st.write(f"📊 Al finalizar la simulación, quedarán **{fechas_restantes_campeonato} fechas en juego** (Máximo absoluto disponible: **{puntos_en_juego_totales:.1f} pts**).")
+            
+            pilotos_con_chances = []
+            pilotos_eliminados = []
+            
+            for _, row_p in df_proyeccion_final.iterrows():
+                p_nombre = row_p["Piloto"]
+                p_puntos = row_p["Puntos Finales Proyectados"]
+                distancia_al_lider = puntos_lider_proy - p_puntos
+                
+                if distancia_al_lider <= puntos_en_juego_totales:
+                    if p_nombre == lider_proyectado:
+                        pilotos_con_chances.append(f"👑 **{p_nombre}** (Líder actual)")
+                    else:
+                        pilotos_con_chances.append(f"🏎️ **{p_nombre}** (A {distancia_al_lider:.2f} pts del líder)")
+                else:
+                    pilotos_eliminados.append(p_nombre)
+            
+            col_vivos, col_eliminados = st.columns(2)
+            with col_vivos:
+                st.markdown("🟢 **Siguen en la Pelea Matemática:**")
+                for p_vivo in pilotos_con_chances: st.write(p_vivo)
+            with col_eliminados:
+                st.markdown("🔴 **Matemáticamente Sin Chances:**")
+                if pilotos_eliminados:
+                    for p_chau in pilotos_eliminados: st.write(f"❌ {p_chau}")
+                else:
+                    st.write("¡Ninguno! Todos los pilotos mantienen chances matemáticas.")
+        else:
+            st.balloons()
+            st.markdown(f"## 🏆 ¡TENEMOS CAMPEÓN DEL TORNEO! ##\nMatemáticamente, **{lider_proyectado}** se consagra Campeón Oficial del Torneo TC2000 con **{puntos_lider_proy:.2f} puntos**.")
+
+        st.markdown("---")
+        # =========================================================================
+        # 🏎️ PANEL VISUAL DE PROYECCIÓN GENERAL (ESTILO F1 TV - SIN TABLAS)
+        # =========================================================================
+        st.markdown("### 📊 Posiciones Finales Proyectadas")
+        
+        # Estilos CSS deportivos para las tarjetas horizontales
+        estilos_panel_proy = """
+        <style>
+        .contenedor-proy {
+            background-color: #1a1c23;
+            border-left: 5px solid #ff1801;
+            border-radius: 6px;
+            padding: 12px 20px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 2px 2px 8px rgba(0,0,0,0.3);
+        }
+        .izquierda-proy {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .puesto-proy {
+            color: #ff1801;
+            font-size: 18px;
+            font-weight: bold;
+            font-family: 'monospace';
+            min-width: 30px;
+        }
+        .nombre-proy {
+            color: #ffffff;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .puntos-ganados-proy {
+            color: #8a8d9a;
+            font-size: 12px;
+            display: block;
+        }
+        .derecha-proy {
+            text-align: right;
+            display: flex;
+            gap: 30px;
+            align-items: center;
+        }
+        .bloque-metrica-proy {
+            text-align: center;
+            min-width: 90px;
+        }
+        .etiqueta-metrica-proy {
+            color: #8a8d9a;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: block;
+            margin-bottom: 2px;
+        }
+        .valor-pts-proy {
+            color: #ffffff;
+            font-size: 18px;
+            font-weight: bold;
+            font-family: 'monospace';
+        }
+        .valor-kg-proy {
+            color: #ff1801;
+            font-size: 18px;
+            font-weight: bold;
+            font-family: 'monospace';
+        }
+        </style>
+        """
+        st.markdown(estilos_panel_proy, unsafe_allow_html=True)
+
+        # Generamos el HTML dinámico piloto por piloto ordenados del 1º al 4º
+        html_panel = ""
+        for idx_p, row_p in df_proyeccion_final.iterrows():
+            puesto = idx_p + 1
+            nombre = row_p["Piloto"]
+            ganados = row_p["Pts Sumados Simulación"]
+            finales = row_p["Puntos Finales Proyectados"]
+            lastre_futuro = row_p["Lastre Próxima Fecha"]
+            
+            html_panel += f"""
+            <div class="contenedor-proy">
+                <div class="izquierda-proy">
+                    <span class="puesto-proy">#{puesto}</span>
+                    <div>
+                        <span class="nombre-proy">🏎️ {nombre}</span>
+                        <span class="puntos-ganados-proy">+{ganados:.2f} pts en simulación</span>
+                    </div>
+                </div>
+                <div class="derecha-proy">
+                    <div class="bloque-metrica-proy">
+                        <span class="etiqueta-metrica-proy">Puntaje Final</span>
+                        <span class="valor-pts-proy">{finales:.2f} pts</span>
+                    </div>
+                    <div class="bloque-metrica-proy">
+                        <span class="etiqueta-metrica-proy">Próximo Lastre</span>
+                        <span class="valor-kg-proy">{lastre_futuro:.1f} Kg</span>
+                    </div>
+                </div>
+            </div>
+            """
+            
+        st.markdown(html_panel, unsafe_allow_html=True)
+
