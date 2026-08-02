@@ -138,116 +138,36 @@ df_resumen = pd.DataFrame({
     "Poles":[0, 0, 0, 0], 
     "Lastre Actual (kg)": [0, 0, 0, 0]
 })
-
 if opcion == "Resumen":
     st.title("📊 Resumen del Campeonato")
     st.write("Sincronizado con tu archivo local Torneo.xlsx")
-    
-        # Selector de vista unificado y limpio
-    if 'opciones_fechas_combinadas' not in locals() and 'opciones_fechas_combinadas' not in globals():
-            opciones_fechas_combinadas = ["Campeonato Completo", "Fecha 1", "Fecha 2", "Fecha 3", "Fecha 4", "Fecha 5"]
 
-    vista_seleccionada_combinada = st.selectbox("Seleccionar Fecha o Histórico:", opciones_fechas_combinadas)
-        
-    if vista_seleccionada_combinada == "Campeonato Completo":
-            vista_seleccionada = "Campeonato Completo"
-    else:
-            vista_seleccionada = str(vista_seleccionada_combinada).split(" - ")[0]
-
-
-    
-    df_resumen = pd.DataFrame({"Piloto": pilotos, "Puntos": [0.0]*4})
-    
     if os.path.exists(ARCHIVO_EXCEL):
         try:
-            # Cargamos la hoja limpia sin procesar encabezados
-            df_hoja1 = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
-            
-            # Buscamos los índices de las filas claves en la columna F (índice 5)
-            columna_f = df_hoja1.iloc[:, 5].astype(str).str.strip().str.upper()
-            indices_totales = columna_f[columna_f == 'TOTAL'].index.tolist()
-            indices_total_fecha = columna_f[columna_f == 'TOTAL FECHA'].index.tolist()
-            
-            # Coordenadas exactas de columnas de pilotos: G=Agus(6), I=Pablo(8), K=Juandi(10), M=Eze(12)
-            indices_pilotos = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
-            
-            puntos_finales = {p: 0.0 for p in pilotos}
-            
-            # VISTA A: CAMPEONATO COMPLETO (Suma los TOTAL FECHA de todas las carreras disputadas)
-            if vista_seleccionada == "Campeonato Completo":
-                for idx_fila in indices_total_fecha:
-                    for p, col_idx in indices_pilotos.items():
-                        val = pd.to_numeric(df_hoja1.iloc[idx_fila, col_idx], errors='coerce')
-                        val_limpio = val if (pd.notna(val) and val > 0) else 0.0
-                        puntos_finales[p] += val_limpio  # Vamos acumulando la suma de cada fecha
-                        
-            # VISTA B: FECHA ESPECÍFICA (Busca el TOTAL FECHA correspondiente al número seleccionado)
-            else:
-                # Extraemos el número de fecha elegido (ej: "Fecha 7" -> índice 6 en la lista de bloques)
-                numero_fecha = int(vista_seleccionada.split()[-1])
-                idx_bloque = numero_fecha - 1 # Ajuste a índice 0 de Python
-                
-                # Validamos que el bloque solicitado exista en el Excel
-                if idx_bloque < len(indices_total_fecha):
-                    fila_total_fecha = indices_total_fecha[idx_bloque]
-                    
-                    for p, col_idx in indices_pilotos.items():
-                        val = pd.to_numeric(df_hoja1.iloc[fila_total_fecha, col_idx], errors='coerce')
-                        puntos_finales[p] = val if pd.notna(val) else 0.0
-            
-            # Asignamos los puntajes extraídos al DataFrame de visualización
-            for p in pilotos:
-                df_resumen.loc[df_resumen["Piloto"] == p, "Puntos"] = float(puntos_finales[p])
-                    
-        except Exception as e:
-            st.error(f"Error al procesar los datos de la hoja: {e}")
-            
-    df_resumen = df_resumen.sort_values(by="Puntos", ascending=False)
-    
-    # 2. RENDERIZADO DE TABLA Y GRÁFICO
-    izq, der = st.columns(2)
-    with izq:
-        st.subheader(f"🏆 Tabla de Posiciones ({vista_seleccionada})")
-        st.dataframe(df_resumen, use_container_width=True, hide_index=True)
-    with der:
-        st.subheader("📈 Gráfico de Rendimiento")
-        fig = px.bar(df_resumen, x="Piloto", y="Puntos", color="Piloto", 
-                     title=f"Puntos - {vista_seleccionada}",
-                     color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
-        fig.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig, use_container_width=True)
+            # 1. CARGA DE BASE DE DATOS Y FILTRADOS DE CONTROL
+            df_puntos_graf = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Tabla Final', engine='openpyxl')
+            df_puntos_graf.columns = [str(c).strip() for c in df_puntos_graf.columns]
+            df_puntos_graf = df_puntos_graf.dropna(subset=["PILOTO"])
 
-        # =========================================================================
-        # 📈 GRÁFICO INTERACTIVO DE EVOLUCIÓN DE PUNTOS Y LASTRE (ESTILO F1 TV)
-        # =========================================================================
-        st.markdown("---")
-        st.subheader("📈 Evolución del Campeonato y Lastre en Vivo")
-        st.write("Pasá el mouse por encima de los nodos para ver el puntaje acumulado, el circuito, las posiciones de llegada y el lastre con el que se LARGÓ:")
-
-        try:
-            # 1. CARGAMOS LA HOJA 1 CRUDA (Estructura vertical)
             df_hoja1_graf = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
-            
-            # Limpiamos las columnas clave para buscar los textos sin fallas
             columna_f_graf = df_hoja1_graf.iloc[:, 5].astype(str).str.strip().str.upper()
             
-            # Detectamos las posiciones verticales de cada bloque de carrera
+            # Detectamos las posiciones verticales en la Hoja1
             filas_totales_fecha = columna_f_graf[columna_f_graf == "TOTAL FECHA"].index.tolist()
             filas_lastre_acum = columna_f_graf[columna_f_graf == "LASTRE ACUMULADO"].index.tolist()
-            
-            # 🛠️ DETECTAMOS FILAS DE CARRERA 1 Y CARRERA 2 PARA SACAR LAS POSICIONES
+            filas_clasif = columna_f_graf[columna_f_graf.str.contains("CLASIF", na=False)].index.tolist()
             filas_c1 = columna_f_graf[columna_f_graf == "C1"].index.tolist()
             filas_c2 = columna_f_graf[columna_f_graf == "C2"].index.tolist()
             
-            # Mapeo de columnas de pilotos en tu Hoja1
             indices_pilotos_graf = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
+            pilotos_torneo = list(indices_pilotos_graf.keys())
             
             datos_evolucion_limpios = []
             puntos_acumulados_carrera = {p: 0.0 for p in indices_pilotos_graf.keys()}
             max_puntaje_detectado = 0.0
             ultima_fecha_con_datos = 0
 
-            # PASO PREVIO: Detectamos cuál es la última fecha que realmente tiene puntos cargados
+            # Detectamos cuál es la última fecha que realmente tiene puntos cargados
             for idx, fila_total in enumerate(filas_totales_fecha):
                 tiene_datos_esta_fecha = False
                 for piloto, col_idx in indices_pilotos_graf.items():
@@ -257,29 +177,67 @@ if opcion == "Resumen":
                 if tiene_datos_esta_fecha:
                     ultima_fecha_con_datos = idx + 1
 
-            # 2. PROCESAMOS SÓLO HASTA LA ÚLTIMA FECHA DISPUTADA
+            # =========================================================================
+            # 🎛️ RESTAURACIÓN DEL SELECTOR HISTÓRICO ORIGINAL DE TU APP
+            # =========================================================================
+            fecha_seleccionada = st.selectbox("Seleccionar Fecha o Histórico:", opciones_fechas_combinadas)
+
+            # Dividimos la pantalla en 2 columnas perfectas como tenías antes
+            col1, col2 = st.columns(2)
+
+            if fecha_seleccionada == "Campeonato Completo":
+                df_filtrado_resumen = df_puntos_graf[["PILOTO", "PTS"]].sort_values(by="PTS", ascending=False).reset_index(drop=True)
+                df_filtrado_resumen.columns = ["Piloto", "Puntos"]
+                titulo_grafico = "Puntos - Campeonato Completo"
+            else:
+                # Si elije una fecha específica (Ej: "Fecha 7") extraemos solo esa columna
+                df_filtrado_resumen = df_puntos_graf[["PILOTO", fecha_seleccionada]].sort_values(by=fecha_seleccionada, ascending=False).reset_index(drop=True)
+                df_filtrado_resumen.columns = ["Piloto", "Puntos"]
+                titulo_grafico = f"Puntos - {fecha_seleccionada}"
+
+            with col1:
+                st.subheader(f"📋 Tabla de Posiciones ({fecha_seleccionada})")
+                st.dataframe(df_filtrado_resumen, use_container_width=True, hide_index=True)
+
+            with col2:
+                st.subheader("📊 Gráfico de Rendimiento")
+                import plotly.express as px
+                fig_barras = px.bar(
+                    df_filtrado_resumen, 
+                    x="Piloto", 
+                    y="Puntos", 
+                    color="Piloto",
+                    template="plotly_dark",
+                    title=titulo_grafico
+                )
+                fig_barras.update_layout(
+                    plot_bgcolor="#1a1c23", 
+                    paper_bgcolor="#0e1117",
+                    margin=dict(l=10, r=10, t=30, b=10)
+                )
+                st.plotly_chart(fig_barras, use_container_width=True)
+
+            # =========================================================================
+            # 📈 SECCIÓN DE EVOLUCIÓN TEMPORAL Y LASTRE FLOTANTE (ABAJO)
+            # =========================================================================
             for idx, fila_total in enumerate(filas_totales_fecha[:ultima_fecha_con_datos]):
                 nombre_fecha_eje_x = f"Fecha {idx + 1}"
                 
-                # Extraemos el nombre real del circuito desde la lista inteligente de la línea 32
                 try:
-                    circuito_real = opciones_fechas_combinadas[idx + 1].split(" - ")[1]
+                    circuito_real = opciones_fechas_combinadas[idx + 1].split(" - ")
                 except:
                     circuito_real = f"Carrera {idx + 1}"
                 
                 for piloto, col_idx in indices_pilotos_graf.items():
-                    # Extraemos los puntos sumados en ESTA fecha en particular y los acumulamos
                     val_puntos_fecha = df_hoja1_graf.iloc[fila_total, col_idx]
                     puntos_fecha_limpio = str(val_puntos_fecha).replace(',', '.', 1) if pd.notna(val_puntos_fecha) else "0.0"
                     puntos_fecha = float(puntos_fecha_limpio) if puntos_fecha_limpio.replace('.','',1).isdigit() else 0.0
                     
                     puntos_acumulados_carrera[piloto] += puntos_fecha
                     
-                    # Registramos el puntaje más alto del torneo para la escala posterior
                     if puntos_acumulados_carrera[piloto] > max_puntaje_detectado:
                         max_puntaje_detectado = puntos_acumulados_carrera[piloto]
                     
-                    # 🛠️ EXTRACCIÓN AUTOMÁTICA DE POSICIONES DE LLEGADA (C1 y C2)
                     pos_c1 = "-"
                     pos_c2 = "-"
                     if idx < len(filas_c1):
@@ -291,7 +249,6 @@ if opcion == "Resumen":
                     
                     resultado_txt = f"{pos_c1} / {pos_c2}"
 
-                    # Lógica de desfase requerida para el lastre con el que se LARGÓ
                     lastre_txt = "0 Kg"
                     if idx > 0:
                         idx_bloque_anterior = idx - 1
@@ -312,9 +269,12 @@ if opcion == "Resumen":
                     })
 
             if datos_evolucion_limpios:
+                st.markdown("---")
+                st.subheader("📈 Evolución del Campeonato y Lastre en Vivo")
+                st.write("Pasá el mouse por encima de los nodos para ver el puntaje acumulado, el circuito, las posiciones de llegada y el lastre con el que se LARGÓ:")
+
                 df_melted_evolucion = pd.DataFrame(datos_evolucion_limpios)
 
-                # 3. DISEÑAMOS EL GRÁFICO INTERACTIVO
                 fig_evolucion = px.line(
                     df_melted_evolucion, 
                     x="Gran Premio", 
@@ -322,24 +282,21 @@ if opcion == "Resumen":
                     color="Piloto",
                     template="plotly_dark",
                     markers=True,
-                    # Pasamos todas las variables para usarlas en la tarjeta flotante
                     custom_data=["Circuito", "Resultado", "LastreInicial", "Piloto"]
                 )
 
-                # 🛠️ TARJETA FLOTANTE ACTUALIZADA CON POSICIONES DE LLEGADA
                 fig_evolucion.update_traces(
                     line=dict(width=3.5), 
                     marker=dict(size=8),
                     hovertemplate="<br>".join([
-                        "🏎️ <b>Piloto:</b> %{customdata[3]}",
-                        "📍 <b>Circuito:</b> %{customdata[0]}",
-                        "🏁 <b>Resultado (C1/C2):</b> %{customdata[1]}",
+                        "🏎️ <b>Piloto:</b> %{customdata}",
+                        "📍 <b>Circuito:</b> %{customdata}",
+                        "🏁 <b>Resultado (C1/C2):</b> %{customdata}",
                         "🏆 <b>Puntos Acumulados:</b> %{y:.2f} pts",
-                        "⚖️ <b>Lastre de Largada:</b> %{customdata[2]}"
+                        "⚖️ <b>Lastre de Largada:</b> %{customdata}"
                     ])
                 )
 
-                # Techo exacto de la escala (+25 puntos del máximo)
                 techo_escala_y = float(max_puntaje_detectado) + 25.0
 
                 fig_evolucion.update_layout(
@@ -347,12 +304,7 @@ if opcion == "Resumen":
                     plot_bgcolor="#1a1c23",
                     paper_bgcolor="#0e1117",
                     xaxis=dict(title="Progreso del Torneo"),
-                    yaxis=dict(
-                        title="Puntuación General", 
-                        range=[0, techo_escala_y], 
-                        autorange=False,
-                        dtick=30  
-                    ),
+                    yaxis=dict(title="Puntuación General", range=[0, techo_escala_y], autorange=False, dtick=30),
                     legend=dict(
                         title=dict(text="<b>PILOTOS</b>", font=dict(color="#ff1801", size=13)),
                         font=dict(color="#ffffff", size=12),
@@ -364,85 +316,82 @@ if opcion == "Resumen":
                 )
 
                 st.plotly_chart(fig_evolucion, use_container_width=True)
-            else:
-                st.warning("⚠️ No se pudieron procesar bloques de carreras válidos en la pestaña 'Hoja1'.")
+
+            # =========================================================================
+            # 📊 TELEMETRÍA Y PROMEDIOS DE RENDIMIENTO (C1, C2 Y POLES)
+            # =========================================================================
+            st.markdown("---")
+            st.subheader("📊 Telemetría y Estadísticas de Rendimiento")
+            st.write("Análisis histórico de posiciones de llegada promedio y efectividad en clasificación de todas las fechas disputadas:")
+
+            # Diccionarios para ir acumulando las posiciones reales de cada piloto
+            posiciones_c1_por_piloto = {p: [] for p in pilotos_torneo}
+            posiciones_c2_por_piloto = {p: [] for p in pilotos_torneo}
+            poles_totales_por_piloto = {p: 0 for p in pilotos_torneo}
+
+            # Conteo seguro de Poles en la fila Clasificación
+            for f_clas in filas_clasif:
+                for piloto, col_idx in indices_pilotos_graf.items():
+                    val_clas = df_hoja1_graf.iloc[f_clas, col_idx]
+                    if pd.notna(val_clas):
+                        try:
+                            num_clas = float(str(val_clas).upper().replace("P", "").strip())
+                            if num_clas == 1.0:
+                                poles_totales_por_piloto[piloto] += 1
+                        except:
+                            pass
+
+            # Escaneo para los promedios de las carreras disputadas
+            for idx_est in range(len(filas_c1)):
+                for piloto, col_idx in indices_pilotos_graf.items():
+                    # --- PROCESAR CARRERA 1 ---
+                    val_c1 = df_hoja1_graf.iloc[filas_c1[idx_est], col_idx]
+                    if pd.notna(val_c1):
+                        try:
+                            num_c1 = float(str(val_c1).upper().replace("P", "").strip())
+                            if num_c1 > 0:
+                                posiciones_c1_por_piloto[piloto].append(num_c1)
+                        except:
+                            pass
+
+                    # --- PROCESAR CARRERA 2 ---
+                    if idx_est < len(filas_c2):
+                        val_c2 = df_hoja1_graf.iloc[filas_c2[idx_est], col_idx]
+            # Compilación del reporte final
+            reporte_avanzado = []
+            for piloto in pilotos_torneo:
+                lista_c1 = posiciones_c1_por_piloto[piloto]
+                lista_c2 = posiciones_c2_por_piloto[piloto]
+                
+                prom_c1 = sum(lista_c1) / len(lista_c1) if lista_c1 else 0.0
+                prom_c2 = sum(lista_c2) / len(lista_c2) if lista_c2 else 0.0
+                poles = poles_totales_por_piloto[piloto]
+                
+                total_carreras = lista_c1 + lista_c2
+                prom_general = sum(total_carreras) / len(total_carreras) if total_carreras else 0.0
+
+                reporte_avanzado.append({
+                    "Piloto": piloto,
+                    "Promedio Carrera 1": f"P{prom_c1:.1f}" if prom_c1 > 0 else "-",
+                    "Promedio Carrera 2": f"P{prom_c2:.1f}" if prom_c2 > 0 else "-",
+                    "Promedio General": f"P{prom_general:.1f}" if prom_general > 0 else "-",
+                    "Poles Totales (Sábado)": f"🥇 {poles} Poles" if poles > 0 else "0"
+                })
+
+            df_reporte_avanzado = pd.DataFrame(reporte_avanzado).sort_values(by="Promedio General")
+
+            # Estampamos la tabla prolija sin índices ocupando todo el ancho
+            st.dataframe(df_reporte_avanzado, use_container_width=True, hide_index=True)
+
+            # Mención de Honor al Rey de la Clasificación
+            rey_pole = max(poles_totales_por_piloto, key=poles_totales_por_piloto.get)
+            max_poles = poles_totales_por_piloto[rey_pole]
+            
+            if max_poles > 0:
+                st.success(f"⏱️ **Rey de los Sábados:** El piloto con más Pole Positions es **{rey_pole}** con un total de **{max_poles} Poles**.")
 
         except Exception as e:
-            st.error(f"No se pudo compilar el gráfico dinámico desde la Hoja1: {e}")
-
-
-            if columnas_carreras:
-                # Transformamos la tabla de puntos a formato largo para Plotly
-                df_melted_evolucion = df_puntos_graf.melt(
-                    id_vars=["PILOTO"], 
-                    value_vars=columnas_carreras, 
-                    var_name="Gran Premio", 
-                    value_name="Puntos"
-                )
-
-                # 3. CRUCE MATEMÁTICO: Inyectar el Lastre correspondiente a cada Fecha y Piloto
-                lastres_calculados = []
-                for _, fila in df_melted_evolucion.iterrows():
-                    piloto_actual = fila["PILOTO"]
-                    gp_actual = fila["Gran Premio"]
-                    
-                    try:
-                        import re
-                        num_fecha = int(re.findall(r'\d+', gp_actual)[0]) - 1
-                        
-                        if num_fecha < len(filas_lastre_acum):
-                            fila_excel_lastre = filas_lastre_acum[num_fecha]
-                            col_excel_piloto = indices_pilotos_lastre.get(piloto_actual)
-                            
-                            if col_excel_piloto is not None:
-                                val_lastre = df_hoja1_graf.iloc[fila_excel_lastre, col_excel_piloto]
-                                peso_kg = float(val_lastre) if pd.notna(val_lastre) else 0.0
-                                lastres_calculados.append(f"{peso_kg:.1f} Kg")
-                            else:
-                                lastres_calculados.append("0.0 Kg")
-                        else:
-                            lastres_calculados.append("0.0 Kg")
-                    except:
-                        lastres_calculados.append("0.0 Kg")
-
-                df_melted_evolucion["Lastre"] = lastres_calculados
-
-                # 4. CREAR EL GRÁFICO INTERACTIVO CON HOVER CUSTOMIZADO
-                fig_evolucion = px.line(
-                    df_melted_evolucion, 
-                    x="Gran Premio", 
-                    y="Puntos", 
-                    color="PILOTO",
-                    template="plotly_dark",
-                    markers=True,
-                    custom_data=["Lastre", "PILOTO"]
-                )
-
-                fig_evolucion.update_traces(
-                    line=dict(width=3.5), 
-                    marker=dict(size=8),
-                    hovertemplate="<br>".join([
-                        "🏎️ <b>Piloto:</b> %{customdata[1]}",
-                        "🏁 <b>Carrera:</b> %{x}",
-                        "🏆 <b>Puntos Acumulados:</b> %{y} pts",
-                        "⚖️ <b>Lastre Técnico:</b> %{customdata[0]}"
-                    ])
-                )
-
-                fig_evolucion.update_layout(
-                    hovermode="closest",
-                    plot_bgcolor="#1a1c23",
-                    paper_bgcolor="#0e1117",
-                    margin=dict(l=20, r=20, t=20, b=20),
-                    height=450
-                )
-
-                st.plotly_chart(fig_evolucion, use_container_width=True)
-            else:
-                st.warning("⚠️ No se detectaron columnas de fechas individuales en la pestaña 'Tabla Final' para armar el gráfico.")
-
-        except Exception as e:
-            st.error(f"No se pudo procesar la telemetría del gráfico: {e}")
+            st.error(f"Error al compilar la pestaña Resumen desde la Hoja1: {e}")
 
 elif opcion == "Comparativa de Tiempos":
     st.title("⏱️ Diferencia de Ritmo y Poles (Histórico vs Fecha)")
