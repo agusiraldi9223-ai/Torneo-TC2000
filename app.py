@@ -150,14 +150,20 @@ if opcion == "Resumen":
             df_puntos_graf = df_puntos_graf.dropna(subset=["PILOTO"])
 
             df_hoja1_graf = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
-            columna_f_graf = df_hoja1_graf.iloc[:, 5].astype(str).str.strip().str.upper()
+
             
-            # Detectamos las posiciones verticales en la Hoja1
+            # Limpiamos la columna F de tu Hoja1 (donde dice C1, C2, Pole, etc.)
+            columna_f_graf = df_hoja1_graf.iloc[:, 5].astype(str).str.strip().str.upper().str.replace("Ó", "O", regex=False)
+            
             filas_totales_fecha = columna_f_graf[columna_f_graf == "TOTAL FECHA"].index.tolist()
             filas_lastre_acum = columna_f_graf[columna_f_graf == "LASTRE ACUMULADO"].index.tolist()
-            filas_clasif = columna_f_graf[columna_f_graf.str.contains("CLASIF", na=False)].index.tolist()
+            # Buscamos C1, C2 y Pole de forma exacta sin importar espacios fantasmas en las celdas
             filas_c1 = columna_f_graf[columna_f_graf == "C1"].index.tolist()
             filas_c2 = columna_f_graf[columna_f_graf == "C2"].index.tolist()
+            
+            # 🛠️ FILTRO TOLERANTE: Captura "Pole", "Pole " o cualquier variante en tu Columna F
+            filas_pole_hoja1 = columna_f_graf[columna_f_graf == "POLE"].index.tolist()
+
             
             indices_pilotos_graf = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
             pilotos_torneo = list(indices_pilotos_graf.keys())
@@ -167,7 +173,6 @@ if opcion == "Resumen":
             max_puntaje_detectado = 0.0
             ultima_fecha_con_datos = 0
 
-            # Detectamos cuál es la última fecha que realmente tiene puntos cargados
             for idx, fila_total in enumerate(filas_totales_fecha):
                 tiene_datos_esta_fecha = False
                 for piloto, col_idx in indices_pilotos_graf.items():
@@ -177,54 +182,51 @@ if opcion == "Resumen":
                 if tiene_datos_esta_fecha:
                     ultima_fecha_con_datos = idx + 1
 
-            # =========================================================================
-            # 🎛️ RESTAURACIÓN DEL SELECTOR HISTÓRICO ORIGINAL DE TU APP
-            # =========================================================================
             fecha_seleccionada = st.selectbox("Seleccionar Fecha o Histórico:", opciones_fechas_combinadas)
-
-            # Dividimos la pantalla en 2 columnas perfectas como tenías antes
-            col1, col2 = st.columns(2)
 
             if fecha_seleccionada == "Campeonato Completo":
                 df_filtrado_resumen = df_puntos_graf[["PILOTO", "PTS"]].sort_values(by="PTS", ascending=False).reset_index(drop=True)
                 df_filtrado_resumen.columns = ["Piloto", "Puntos"]
                 titulo_grafico = "Puntos - Campeonato Completo"
             else:
-                # Si elije una fecha específica (Ej: "Fecha 7") extraemos solo esa columna
                 df_filtrado_resumen = df_puntos_graf[["PILOTO", fecha_seleccionada]].sort_values(by=fecha_seleccionada, ascending=False).reset_index(drop=True)
                 df_filtrado_resumen.columns = ["Piloto", "Puntos"]
                 titulo_grafico = f"Puntos - {fecha_seleccionada}"
 
+            # --- TABLA Y GRÁFICO SUPERIOR ---
+            col1, col2 = st.columns(2)
             with col1:
                 st.subheader(f"📋 Tabla de Posiciones ({fecha_seleccionada})")
-                st.dataframe(df_filtrado_resumen, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    df_filtrado_resumen,
+                    column_config={
+                        "Piloto": st.column_config.TextColumn("Piloto 🏎️", width="medium"),
+                        "Puntos": st.column_config.ProgressColumn(
+                            "Puntos Generales",
+                            format="%.2f pts",
+                            min_value=0,
+                            max_value=int(df_filtrado_resumen["Puntos"].max() if len(df_filtrado_resumen) > 0 else 300)
+                        )
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             with col2:
                 st.subheader("📊 Gráfico de Rendimiento")
-                import plotly.express as px
                 fig_barras = px.bar(
-                    df_filtrado_resumen, 
-                    x="Piloto", 
-                    y="Puntos", 
-                    color="Piloto",
-                    template="plotly_dark",
-                    title=titulo_grafico
+                    df_filtrado_resumen, x="Piloto", y="Puntos", color="Piloto",
+                    template="plotly_dark", title=titulo_grafico,
+                    color_discrete_sequence=["#e10600", "#00b0ff", "#ff9100", "#00e676"]
                 )
-                fig_barras.update_layout(
-                    plot_bgcolor="#1a1c23", 
-                    paper_bgcolor="#0e1117",
-                    margin=dict(l=10, r=10, t=30, b=10)
-                )
-                st.plotly_chart(fig_barras, use_container_width=True)
+                fig_barras.update_layout(plot_bgcolor="#161925", paper_bgcolor="#0f111a", margin=dict(l=10, r=10, t=40, b=10), showlegend=False)
+                st.plotly_chart(fig_barras, use_container_width=True, key="resumen_rendimiento_fijo")
 
-            # =========================================================================
-            # 📈 SECCIÓN DE EVOLUCIÓN TEMPORAL Y LASTRE FLOTANTE (ABAJO)
-            # =========================================================================
+            # --- GRÁFICO DE LÍNEAS (EVOLUCIÓN) ---
             for idx, fila_total in enumerate(filas_totales_fecha[:ultima_fecha_con_datos]):
                 nombre_fecha_eje_x = f"Fecha {idx + 1}"
-                
                 try:
-                    circuito_real = opciones_fechas_combinadas[idx + 1].split(" - ")
+                    circuito_real = opciones_fechas_combinadas[idx + 1].split(" - ")[1]
                 except:
                     circuito_real = f"Carrera {idx + 1}"
                 
@@ -234,7 +236,6 @@ if opcion == "Resumen":
                     puntos_fecha = float(puntos_fecha_limpio) if puntos_fecha_limpio.replace('.','',1).isdigit() else 0.0
                     
                     puntos_acumulados_carrera[piloto] += puntos_fecha
-                    
                     if puntos_acumulados_carrera[piloto] > max_puntaje_detectado:
                         max_puntaje_detectado = puntos_acumulados_carrera[piloto]
                     
@@ -256,151 +257,198 @@ if opcion == "Resumen":
                             fila_lastre_anterior = filas_lastre_acum[idx_bloque_anterior]
                             val_lastre = df_hoja1_graf.iloc[fila_lastre_anterior, col_idx]
                             if pd.notna(val_lastre):
-                                lastre_limpio = str(val_lastre).upper().replace("KG", "").strip()
-                                lastre_txt = f"{lastre_limpio} Kg"
+                                lastre_txt = f"{str(val_lastre).upper().replace('KG', '').strip()} Kg"
                     
                     datos_evolucion_limpios.append({
-                        "Piloto": piloto,
-                        "Gran Premio": nombre_fecha_eje_x,
-                        "Puntos Acumulados": puntos_acumulados_carrera[piloto],
-                        "Circuito": circuito_real,
-                        "Resultado": resultado_txt,
-                        "LastreInicial": lastre_txt
+                        "Piloto": piloto, "Gran Premio": nombre_fecha_eje_x, "Puntos Acumulados": puntos_acumulados_carrera[piloto],
+                        "Circuito": circuito_real, "Resultado": resultado_txt, "LastreInicial": lastre_txt
                     })
 
             if datos_evolucion_limpios:
                 st.markdown("---")
                 st.subheader("📈 Evolución del Campeonato y Lastre en Vivo")
-                st.write("Pasá el mouse por encima de los nodos para ver el puntaje acumulado, el circuito, las posiciones de llegada y el lastre con el que se LARGÓ:")
-
                 df_melted_evolucion = pd.DataFrame(datos_evolucion_limpios)
-
                 fig_evolucion = px.line(
-                    df_melted_evolucion, 
-                    x="Gran Premio", 
-                    y="Puntos Acumulados", 
-                    color="Piloto",
-                    template="plotly_dark",
-                    markers=True,
-                    custom_data=["Circuito", "Resultado", "LastreInicial", "Piloto"]
+                    df_melted_evolucion, x="Gran Premio", y="Puntos Acumulados", color="Piloto",
+                    template="plotly_dark", markers=True, custom_data=["Circuito", "Resultado", "LastreInicial", "Piloto"]
                 )
-
                 fig_evolucion.update_traces(
-                    line=dict(width=3.5), 
-                    marker=dict(size=8),
-                    hovertemplate="<br>".join([
-                        "🏎️ <b>Piloto:</b> %{customdata}",
-                        "📍 <b>Circuito:</b> %{customdata}",
-                        "🏁 <b>Resultado (C1/C2):</b> %{customdata}",
-                        "🏆 <b>Puntos Acumulados:</b> %{y:.2f} pts",
-                        "⚖️ <b>Lastre de Largada:</b> %{customdata}"
-                    ])
+                    line=dict(width=3.5), marker=dict(size=8),
+                    hovertemplate="🏎️ <b>Piloto:</b> %{customdata}<br>📍 <b>Circuito:</b> %{customdata}<br>🏁 <b>Resultado (C1/C2):</b> %{customdata}<br>🏆 <b>Puntos Acumulados:</b> %{y:.2f} pts<br>⚖️ <b>Lastre Inicial:</b> %{customdata}<extra></extra>"
                 )
-
-                techo_escala_y = float(max_puntaje_detectado) + 25.0
-
-                fig_evolucion.update_layout(
-                    hovermode="closest",
-                    plot_bgcolor="#1a1c23",
-                    paper_bgcolor="#0e1117",
-                    xaxis=dict(title="Progreso del Torneo"),
-                    yaxis=dict(title="Puntuación General", range=[0, techo_escala_y], autorange=False, dtick=30),
-                    legend=dict(
-                        title=dict(text="<b>PILOTOS</b>", font=dict(color="#ff1801", size=13)),
-                        font=dict(color="#ffffff", size=12),
-                        bgcolor="rgba(0,0,0,0)",
-                        bordercolor="rgba(0,0,0,0)"
-                    ),
-                    margin=dict(l=20, r=20, t=20, b=20),
-                    height=470
-                )
-
-                st.plotly_chart(fig_evolucion, use_container_width=True)
+                fig_evolucion.update_layout(hovermode="closest", plot_bgcolor="#161925", paper_bgcolor="#0f111a", margin=dict(l=20, r=20, t=20, b=20), height=400)
+                st.plotly_chart(fig_evolucion, use_container_width=True, key="evolucion_lineas_resumen_fijo")
 
             # =========================================================================
-            # 📊 TELEMETRÍA Y PROMEDIOS DE RENDIMIENTO (C1, C2 Y POLES)
+            # 📊 SECCIÓN DE TELEMETRÍA (RITMO MEDIO + POLES EXTRAÍDAS DE HOJA1)
             # =========================================================================
             st.markdown("---")
-            st.subheader("📊 Telemetría y Estadísticas de Rendimiento")
-            st.write("Análisis histórico de posiciones de llegada promedio y efectividad en clasificación de todas las fechas disputadas:")
-
-            # Diccionarios para ir acumulando las posiciones reales de cada piloto
+            st.subheader("🏎️ Telemetría y Estadísticas de Rendimiento")
+            
             posiciones_c1_por_piloto = {p: [] for p in pilotos_torneo}
             posiciones_c2_por_piloto = {p: [] for p in pilotos_torneo}
             poles_totales_por_piloto = {p: 0 for p in pilotos_torneo}
 
-            # Conteo seguro de Poles en la fila Clasificación
-            for f_clas in filas_clasif:
+            # 🛠️ CONTEO SEGURO DE POLES (Apuntando a las columnas H, J, L, N de puntos reales)
+            for f_pole in filas_pole_hoja1:
                 for piloto, col_idx in indices_pilotos_graf.items():
-                    val_clas = df_hoja1_graf.iloc[f_clas, col_idx]
-                    if pd.notna(val_clas):
+                    columna_puntos_idx = col_idx + 1
+                    val_pole = df_hoja1_graf.iloc[f_pole, columna_puntos_idx]
+                    
+                    if pd.notna(val_pole) and str(val_pole).strip() != "":
                         try:
-                            num_clas = float(str(val_clas).upper().replace("P", "").strip())
-                            if num_clas == 1.0:
+                            # Convertimos el punto cargado manualmente en tu Hoja1
+                            num_puntos_pole = float(str(val_pole).replace(",", ".").strip())
+                            
+                            # Condición exacta: sumamos la pole si y solo si la celda tiene exactamente 1.0 punto
+                            if num_puntos_pole == 1.0:
                                 poles_totales_por_piloto[piloto] += 1
                         except:
                             pass
 
-            # Escaneo para los promedios de las carreras disputadas
+
+            # Extracción de posiciones promedio desde Hoja1
+            # Recorremos de forma segura cada una de las fechas disputadas
             for idx_est in range(len(filas_c1)):
                 for piloto, col_idx in indices_pilotos_graf.items():
-                    # --- PROCESAR CARRERA 1 ---
                     val_c1 = df_hoja1_graf.iloc[filas_c1[idx_est], col_idx]
                     if pd.notna(val_c1):
                         try:
                             num_c1 = float(str(val_c1).upper().replace("P", "").strip())
-                            if num_c1 > 0:
+                            if num_c1 > 0: 
                                 posiciones_c1_por_piloto[piloto].append(num_c1)
-                        except:
+                        except: 
                             pass
-
-                    # --- PROCESAR CARRERA 2 ---
+                    
                     if idx_est < len(filas_c2):
                         val_c2 = df_hoja1_graf.iloc[filas_c2[idx_est], col_idx]
-            # Compilación del reporte final
-            reporte_avanzado = []
+                        if pd.notna(val_c2):
+                            try:
+                                num_c2 = float(str(val_c2).upper().replace("P", "").strip())
+                                if num_c2 > 0: 
+                                    posiciones_c2_por_piloto[piloto].append(num_c2)
+                            except: 
+                                pass
+                    
+                    if idx_est < len(filas_c2):
+                        val_c2 = df_hoja1_graf.iloc[filas_c2[idx_est], col_idx]
+                        if pd.notna(val_c2):
+                            try:
+                                num_c2 = float(str(val_c2).upper().replace("P", "").strip())
+                                if num_c2 > 0: 
+                                    posiciones_c2_por_piloto[piloto].append(num_c2)
+                            except: 
+                                pass
+
+            # --- COMPILACIÓN DEL REPORTE FINAL ---
+            reporte_tarjetas = []
             for piloto in pilotos_torneo:
-                lista_c1 = posiciones_c1_por_piloto[piloto]
-                lista_c2 = posiciones_c2_por_piloto[piloto]
-                
+                lista_c1 = posiciones_c1_por_piloto.get(piloto, [])
+                lista_c2 = posiciones_c2_por_piloto.get(piloto, [])
                 prom_c1 = sum(lista_c1) / len(lista_c1) if lista_c1 else 0.0
                 prom_c2 = sum(lista_c2) / len(lista_c2) if lista_c2 else 0.0
-                poles = poles_totales_por_piloto[piloto]
+                poles_reales = poles_totales_por_piloto.get(piloto, 0)
                 
-                total_carreras = lista_c1 + lista_c2
-                prom_general = sum(total_carreras) / len(total_carreras) if total_carreras else 0.0
+                total_mangas = lista_c1 + lista_c2
+                prom_general = sum(total_mangas) / len(total_mangas) if total_mangas else 0.0
 
-                reporte_avanzado.append({
-                    "Piloto": piloto,
-                    "Promedio Carrera 1": f"P{prom_c1:.1f}" if prom_c1 > 0 else "-",
-                    "Promedio Carrera 2": f"P{prom_c2:.1f}" if prom_c2 > 0 else "-",
-                    "Promedio General": f"P{prom_general:.1f}" if prom_general > 0 else "-",
-                    "Poles Totales (Sábado)": f"🥇 {poles} Poles" if poles > 0 else "0"
+                reporte_tarjetas.append({
+                    "Piloto": piloto, 
+                    "Promedio C1": prom_c1 if prom_c1 > 0 else 99.0,
+                    "Promedio C2": prom_c2 if prom_c2 > 0 else 99.0, 
+                    "Promedio General": prom_general if prom_general > 0 else 99.0,
+                    "Poles": poles_reales
                 })
 
-            df_reporte_avanzado = pd.DataFrame(reporte_avanzado).sort_values(by="Promedio General")
+            df_reporte_tarjetas = pd.DataFrame(reporte_tarjetas).sort_values(by="Promedio General")
 
-            # Estampamos la tabla prolija sin índices ocupando todo el ancho
-            st.dataframe(df_reporte_avanzado, use_container_width=True, hide_index=True)
+            # --- MAQUILLAJE DE LAS TARJETAS (ESTILO LASTRE) ---
+            st.markdown("""
+            <style>
+            .tarjeta-simulacion-f1 {
+                background-color: #161925;
+                border-left: 5px solid #e10600;
+                border-radius: 10px;
+                padding: 18px;
+                margin-bottom: 15px;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            }
+            .titulo-simulacion-f1 {
+                margin: 0; font-size: 11px; color: #9fa6b2; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;
+            }
+            .piloto-simulacion-f1 {
+                margin: 0; padding: 4px 0; color: #ffffff; font-size: 26px; font-weight: bold;
+            }
+            .divisor-simulacion-f1 {
+                margin: 8px 0; border-color: #2a2f45;
+            }
+            .bloque-valores-f1 {
+                display: flex; justify-content: space-between; align-items: center;
+            }
+            .sub-metrica-f1 { text-align: left; }
+            .sub-metrica-der-f1 { text-align: right; }
+            .texto-gris-f1 { margin: 0; font-size: 12px; color: #9fa6b2; }
+            .texto-blanco-bold-f1 { margin: 0; font-size: 20px; color: #ffffff; font-weight: bold; font-family: monospace; }
+            .texto-rojo-bold-f1 { margin: 0; font-size: 15px; color: #e10600; font-weight: bold; font-family: monospace; }
+            </style>
+            """, unsafe_allow_html=True)
 
-            # Mención de Honor al Rey de la Clasificación
+            cols_grid = st.columns(4)
+            for idx_c, row in df_reporte_tarjetas.reset_index(drop=True).iterrows():
+                p_name = row["Piloto"]
+                p_gen = f"P{row['Promedio General']:.1f}" if row["Promedio General"] != 99.0 else "-"
+                p_c1 = f"P{row['Promedio C1']:.1f}" if row["Promedio C1"] != 99.0 else "-"
+                p_c2 = f"P{row['Promedio C2']:.1f}" if row["Promedio C2"] != 99.0 else "-"
+                p_poles = int(row["Poles"])
+                
+                color_borde_pista = "#00e676" if idx_c == 0 else "#e10600"
+                
+                with cols_grid[idx_c % 4]:
+                    st.markdown(f"""
+                        <div class="tarjeta-simulacion-f1" style="border-left: 5px solid {color_borde_pista};">
+                            <p class="titulo-simulacion-f1">Rendimiento en Pista</p>
+                            <h3 class="piloto-simulacion-f1">{p_name}</h3>
+                            <hr class="divisor-simulacion-f1">
+                            <div class="bloque-valores-f1">
+                                <div class="sub-metrica-f1">
+                                    <p class="texto-gris-f1">Ritmo General:</p>
+                                    <p class="texto-blanco-bold-f1" style="color: #00e676;">{p_gen}</p>
+                                </div>
+                                <div class="sub-metrica-der-f1">
+                                    <p class="texto-gris-f1">Poles / C1 / C2:</p>
+                                    <p class="texto-rojo-bold-f1" style="color: #00b0ff;">🥇 {p_poles} <span style="color:#ffffff; font-size:11px; font-weight:normal;">({p_c1}/{p_c2})</span></p>
+                                </div>
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+            st.write("#### 📊 Tabla de Resumen Detallada")
+            st.dataframe(
+                df_reporte_tarjetas.assign(
+                    **{
+                        "Promedio General": lambda x: x["Promedio General"].apply(lambda v: f"P{v:.1f}" if v != 99.0 else "-"),
+                        "Promedio C1": lambda x: x["Promedio C1"].apply(lambda v: f"P{v:.1f}" if v != 99.0 else "-"),
+                        "Promedio C2": lambda x: x["Promedio C2"].apply(lambda v: f"P{v:.1f}" if v != 99.0 else "-"),
+                        "Poles": lambda x: x["Poles"].apply(lambda v: f"🥇 {int(v)} Poles")
+                    }
+                ),
+                use_container_width=True, hide_index=True
+            )
+
             rey_pole = max(poles_totales_por_piloto, key=poles_totales_por_piloto.get)
             max_poles = poles_totales_por_piloto[rey_pole]
-            
             if max_poles > 0:
                 st.success(f"⏱️ **Rey de los Sábados:** El piloto con más Pole Positions es **{rey_pole}** con un total de **{max_poles} Poles**.")
 
         except Exception as e:
-            st.error(f"Error al compilar la pestaña Resumen desde la Hoja1: {e}")
+            st.error(f"Error general en la pestaña Resumen: {e}")
 
 elif opcion == "Comparativa de Tiempos":
     st.title("⏱️ Diferencia de Ritmo y Poles (Histórico vs Fecha)")
     st.write("Análisis estadístico milimétrico basado en tu pestaña 'Carga Tiempos'")
 
     if df_tiempos is not None:
-        # Selector directo tradicional sin solapas intermedias
-                # Selector directo tradicional sin solapas intermedias
-        fecha_tiempos_sel_combinada = st.selectbox("Seleccionar Período a Analizar:", opciones_fechas_combinadas)
+        fecha_tiempos_sel_combinada = st.selectbox("Seleccionar Período a Analizar:", opciones_fechas_combinadas, key="selector_tiempos_global")
         
         if fecha_tiempos_sel_combinada == "Campeonato Completo":
             fecha_tiempos_sel = "Campeonato Completo"
@@ -408,15 +456,11 @@ elif opcion == "Comparativa de Tiempos":
             fecha_tiempos_sel = str(fecha_tiempos_sel_combinada).split(" - ")[0]
         
         df_tiempos_crudo = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', header=None, engine='openpyxl')
-
-        
-        df_tiempos_crudo = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', header=None, engine='openpyxl')
         df_tiempos_crudo.iloc[:, 0] = df_tiempos_crudo.iloc[:, 0].ffill()
         indices_pilotos_fechas = {"Agus": 2, "Pablo": 3, "Juandi": 4, "Eze": 5}
         columna_circuitos = df_tiempos_crudo.iloc[:, 0].astype(str).str.strip().str.upper()
         columna_sesiones = df_tiempos_crudo.iloc[:, 1].astype(str).str.strip().str.upper()
         
-        # DETECCIÓN AUTOMÁTICA DE CIRCUITOS (Sin escribir nombres fijos)
         circuitos_ordenados = []
         for c in df_tiempos_crudo.iloc[:, 0].dropna().astype(str).str.strip():
             if c.upper() not in [x.upper() for x in circuitos_ordenados] and c != "":
@@ -431,13 +475,71 @@ elif opcion == "Comparativa de Tiempos":
                             return f
             return None
 
+        # 🛠️ NUEVA FUNCIÓN IN SITU PARA PASAR SEGUNDOS A "MM:SS.mmm"
+        def formatear_segundos_a_vuelta(segundos_totales):
+            if segundos_totales is None or pd.isna(segundos_totales) or segundos_totales == 999.0:
+                return "-"
+            try:
+                minutos = int(segundos_totales // 60)
+                segundos_puros = segundos_totales % 60
+                return f"{minutos:02d}:{segundos_puros:06.3f}".replace(".", ",")
+            except:
+                return f"{segundos_totales:.3f}s"
+
+        # --- SECCIÓN CSS UNIFICADA PARA LAS NUEVAS TARJETAS ---
+        st.markdown("""
+        <style>
+        .columna-tiempos-box {
+            background-color: #0f111a;
+            border: 1px solid #2a2f45;
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .tarjeta-tiempo-f1 {
+            background-color: #161925;
+            border-left: 5px solid #e10600;
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        .info-izq-tiempo {
+            display: flex;
+            flex-direction: column;
+        }
+        .piloto-tiempo-f1 {
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: bold;
+        }
+        .tiempo-vuelta-f1 {
+            color: #00ff88;
+            font-size: 13px;
+            font-family: monospace;
+            margin-top: 1px;
+        }
+        .gap-der-tiempo {
+            text-align: right;
+            font-size: 14px;
+            font-weight: bold;
+            font-family: monospace;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # =========================================================================
+        # 📈 DETECTOR COMPLETO PARA EL CAMPEONATO COMPLETO
+        # =========================================================================
         if fecha_tiempos_sel == "Campeonato Completo":
             st.header("📈 Resumen Global Acumulado (Todas las Carreras Disputadas)")
             
-            def calcular_promedios_historicos_python(palabra_sesion, titulo_seccion):
+            def calcular_promedios_historicos_python(palabra_sesion, titulo_seccion, key_graf):
                 tiempos_acumulados = {p: [] for p in pilotos}
                 
-                # Iteramos sobre los circuitos reales encontrados automáticamente
                 for circuito_id in circuitos_ordenados:
                     fila_exacta = buscar_coordenada_fila(circuito_id, palabra_sesion)
                     if fila_exacta is not None:
@@ -467,30 +569,44 @@ elif opcion == "Comparativa de Tiempos":
                     tiempo_base = promedios_finales[lider_t]
                     tabla_global = []
                     for p in pilotos:
-                        # 🛠️ CORRECCIÓN: Validamos de forma segura la existencia del promedio y el tipo de dato
                         if p in promedios_finales and promedios_finales[p] is not None:
                             brecha = promedios_finales[p] - tiempo_base
-                            # Si segundos_a_formato o formato_diferencia fallan por alcance, usamos un fallback seguro
-                            try:
-                                t_formateado = segundos_a_formato(promedios_finales[p])
-                            except:
-                                t_formateado = f"{promedios_finales[p]:.3f}s"
-                                
-                            try:
-                                b_formateada = "0" if brecha == 0 else formato_diferencia(brecha)
-                            except:
-                                b_formateada = "0" if brecha == 0 else f"+{brecha:.3f}s"
-                                
+                            t_formateado = formatear_segundos_a_vuelta(promedios_finales[p])
+                            b_formateada = "Líder" if brecha == 0 else f"+{brecha:.3f}s".replace(".", ",")
                             tabla_global.append({"Piloto": p, "Tiempo": t_formateado, "Brecha con Líder": b_formateada, "Orden_Num": brecha})
                         else:
                             tabla_global.append({"Piloto": p, "Tiempo": "-", "Brecha con Líder": "-", "Orden_Num": 999.0})
-                    st.subheader(titulo_seccion)
-                    st.dataframe(pd.DataFrame(tabla_global).sort_values("Orden_Num")[["Piloto", "Tiempo", "Brecha con Líder"]], use_container_width=True, hide_index=True)
+                    
+                    df_res = pd.DataFrame(tabla_global).sort_values("Orden_Num").reset_index(drop=True)
+                    
+                    # --- COMPONENTE VISUAL EN TARJETAS HORIZONTALES ---
+                    st.markdown(f'<div class="columna-tiempos-box"><span style="color: #ffffff; font-size: 16px; font-weight: bold; display: block; margin-bottom: 12px;">📋 {titulo_seccion}</span>', unsafe_allow_html=True)
+
+                    for idx_t, row_t in df_res.iterrows():
+                        color_borde = "#00e676" if idx_t == 0 else "#e10600"
+                        color_texto_gap = "#00e676" if row_t["Brecha con Líder"] == "Líder" else "#ff9100"
+                        
+                        st.markdown(f"""
+                            <div class="tarjeta-tiempo-f1" style="border-left: 5px solid {color_borde};">
+                                <div class="info-izq-tiempo">
+                                    <span class="piloto-tiempo-f1">#{idx_t + 1} — {row_t['Piloto']}</span>
+                                    <span class="tiempo-vuelta-f1">⏱️ {row_t['Tiempo']}</span>
+                                </div>
+                                <div class="gap-der-tiempo" style="color: {color_texto_gap};">
+                                    {row_t['Brecha con Líder']}
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
 
             col1, col2, col3 = st.columns(3)
-            with col1: calcular_promedios_historicos_python("CLASIF", "🏎️ Clasificación (Poles)")
-            with col2: calcular_promedios_historicos_python("CARRERA 1", "🏁 Carrera 1")
-            with col3: calcular_promedios_historicos_python("CARRERA 2", "🏁 Carrera 2")
+            with col1: calcular_promedios_historicos_python("CLASIF", "Clasificación (Poles)", "c_hist")
+            with col2: calcular_promedios_historicos_python("CARRERA 1", "Carrera 1", "c1_hist")
+            with col3: calcular_promedios_historicos_python("CARRERA 2", "Carrera 2", "c2_hist")
+
+        # =========================================================================
+        # 📅 DETECTOR PARA FECHA INDIVIDUAL SELECCIONADA
+        # =========================================================================
         else:
             try:
                 idx_fecha = int(fecha_tiempos_sel.replace("Fecha ", "")) - 1
@@ -499,6 +615,7 @@ elif opcion == "Comparativa de Tiempos":
                 circuito_buscado = None
 
             if circuito_buscado:
+                st.header(f"📍 Tiempos en {circuito_buscado} ({fecha_tiempos_sel_combinada})")
                 fila_clasif = buscar_coordenada_fila(circuito_buscado, "CLASIF")
                 fila_c1 = buscar_coordenada_fila(circuito_buscado, "CARRERA 1")
                 fila_c2 = buscar_coordenada_fila(circuito_buscado, "CARRERA 2")
@@ -511,27 +628,39 @@ elif opcion == "Comparativa de Tiempos":
                     for p, col_idx in indices_pilotos_fechas.items():
                         seg = tiempo_a_segundos(df_tiempos_crudo.iloc[fila_real, col_idx])
                         if seg is not None and seg > 30.0: tiempos_pilotos_fecha[p] = seg
+                        
                     if tiempos_pilotos_fecha:
                         tiempo_base = tiempos_pilotos_fecha[min(tiempos_pilotos_fecha, key=tiempos_pilotos_fecha.get)]
                         tabla_brechas = []
                         for p in pilotos:
                             if p in tiempos_pilotos_fecha:
                                 brecha = tiempos_pilotos_fecha[p] - tiempo_base
-                                try:
-                                    t_formateado = segundos_a_formato(tiempos_pilotos_fecha[p])
-                                except:
-                                    t_formateado = f"{tiempos_pilotos_fecha[p]:.3f}s"
-                                    
-                                try:
-                                    b_formateada = "0" if brecha == 0 else formato_diferencia(brecha)
-                                except:
-                                    b_formateada = "0" if brecha == 0 else f"+{brecha:.3f}s"
-                                    
+                                t_formateado = formatear_segundos_a_vuelta(tiempos_pilotos_fecha[p])
+                                b_formateada = "Líder" if brecha == 0 else f"+{brecha:.3f}s".replace(".", ",")
                                 tabla_brechas.append({"Piloto": p, "Tiempo": t_formateado, "Brecha con Líder": b_formateada, "Orden_Num": brecha})
                             else:
                                 tabla_brechas.append({"Piloto": p, "Tiempo": "-", "Brecha con Líder": "-", "Orden_Num": 999.0})
-                        st.subheader(f"📋 {tipo_sesion}")
-                        st.dataframe(pd.DataFrame(tabla_brechas).sort_values(by="Orden_Num")[["Piloto", "Tiempo", "Brecha con Líder"]], use_container_width=True, hide_index=True)
+                        
+                        df_res_ind = pd.DataFrame(tabla_brechas).sort_values(by="Orden_Num").reset_index(drop=True)
+                        
+                        # --- COMPONENTE VISUAL INDIVIDUAL EN TARJETAS HORIZONTALES ---
+                        st.markdown(f'<div class="columna-tiempos-box">📋 <b>{tipo_sesion}</b>', unsafe_allow_html=True)
+                        for idx_t, row_t in df_res_ind.iterrows():
+                            color_borde = "#00e676" if idx_t == 0 else "#e10600"
+                            color_texto_gap = "#00e676" if row_t["Brecha con Líder"] == "Líder" else "#ff9100"
+                            
+                            st.markdown(f"""
+                                <div class="tarjeta-tiempo-f1" style="border-left: 5px solid {color_borde};">
+                                    <div class="info-izq-tiempo">
+                                        <span class="piloto-tiempo-f1">#{idx_t + 1} — {row_t['Piloto']}</span>
+                                        <span class="tiempo-vuelta-f1">⏱️ {row_t['Tiempo']}</span>
+                                    </div>
+                                    <div class="gap-der-tiempo" style="color: {color_texto_gap};">
+                                        {row_t['Brecha con Líder']}
+                                    </div>
+                                </div>
+                            """, unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
 
                 col1, col2, col3 = st.columns(3)
                 with col1: analizar_sesion_individual_dinamica(fila_clasif, "Clasificación")
@@ -539,6 +668,7 @@ elif opcion == "Comparativa de Tiempos":
                 with col3: analizar_sesion_individual_dinamica(fila_c2, "Carrera 2")
             else:
                 st.warning(f"La {fecha_tiempos_sel} aún no tiene datos cargados en el Excel.")
+
 
 elif opcion == "Lastre":
     st.title("⚖️ Sistema de Lastre Técnico")
@@ -1348,31 +1478,31 @@ elif opcion == "Simulador de Campeonato":
         # =========================================================================
         st.markdown("### 📊 Posiciones Finales Proyectadas")
         
-        # Estilos CSS deportivos para las tarjetas horizontales
+        # --- ESTILOS CSS REFINADOS PARA LAS TARJETAS HORIZONTALES ---
         estilos_panel_proy = """
         <style>
         .contenedor-proy {
-            background-color: #1a1c23;
-            border-left: 5px solid #ff1801;
-            border-radius: 6px;
-            padding: 12px 20px;
+            background-color: #161925;
+            border-left: 5px solid #e10600;
+            border-radius: 10px;
+            padding: 14px 20px;
             margin-bottom: 12px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            box-shadow: 2px 2px 8px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
         .izquierda-proy {
             display: flex;
             align-items: center;
-            gap: 15px;
+            gap: 20px;
         }
         .puesto-proy {
-            color: #ff1801;
-            font-size: 18px;
+            color: #e10600;
+            font-size: 20px;
             font-weight: bold;
             font-family: 'monospace';
-            min-width: 30px;
+            min-width: 35px;
         }
         .nombre-proy {
             color: #ffffff;
@@ -1380,9 +1510,10 @@ elif opcion == "Simulador de Campeonato":
             font-weight: bold;
         }
         .puntos-ganados-proy {
-            color: #8a8d9a;
+            color: #9fa6b2;
             font-size: 12px;
             display: block;
+            margin-top: 2px;
         }
         .derecha-proy {
             text-align: right;
@@ -1395,7 +1526,7 @@ elif opcion == "Simulador de Campeonato":
             min-width: 90px;
         }
         .etiqueta-metrica-proy {
-            color: #8a8d9a;
+            color: #9fa6b2;
             font-size: 10px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
@@ -1409,7 +1540,7 @@ elif opcion == "Simulador de Campeonato":
             font-family: 'monospace';
         }
         .valor-kg-proy {
-            color: #ff1801;
+            color: #ff9100;
             font-size: 18px;
             font-weight: bold;
             font-family: 'monospace';
@@ -1427,8 +1558,13 @@ elif opcion == "Simulador de Campeonato":
             finales = row_p["Puntos Finales Proyectados"]
             lastre_futuro = row_p["Lastre Próxima Fecha"]
             
+            # Cambia el color del texto del Kilaje dinámicamente según la severidad de la carga
+            color_kg_dinamico = "#e10600" if lastre_futuro > 30.0 else ("#ff9100" if lastre_futuro > 10.0 else "#00e676")
+            # El líder de la simulación se destaca con un borde verde neón en su tarjeta
+            color_borde_tarjeta = "#00e676" if idx_p == 0 else "#e10600"
+            
             html_panel += f"""
-            <div class="contenedor-proy">
+            <div class="contenedor-proy" style="border-left: 5px solid {color_borde_tarjeta};">
                 <div class="izquierda-proy">
                     <span class="puesto-proy">#{puesto}</span>
                     <div>
@@ -1443,11 +1579,10 @@ elif opcion == "Simulador de Campeonato":
                     </div>
                     <div class="bloque-metrica-proy">
                         <span class="etiqueta-metrica-proy">Próximo Lastre</span>
-                        <span class="valor-kg-proy">{lastre_futuro:.1f} Kg</span>
+                        <span class="valor-kg-proy" style="color: {color_kg_dinamico};">{lastre_futuro:.1f} Kg</span>
                     </div>
                 </div>
             </div>
             """
             
         st.markdown(html_panel, unsafe_allow_html=True)
-
