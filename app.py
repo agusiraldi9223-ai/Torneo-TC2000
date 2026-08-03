@@ -150,20 +150,13 @@ if opcion == "Resumen":
             df_puntos_graf = df_puntos_graf.dropna(subset=["PILOTO"])
 
             df_hoja1_graf = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
-
-            
-            # Limpiamos la columna F de tu Hoja1 (donde dice C1, C2, Pole, etc.)
             columna_f_graf = df_hoja1_graf.iloc[:, 5].astype(str).str.strip().str.upper().str.replace("Ó", "O", regex=False)
             
             filas_totales_fecha = columna_f_graf[columna_f_graf == "TOTAL FECHA"].index.tolist()
             filas_lastre_acum = columna_f_graf[columna_f_graf == "LASTRE ACUMULADO"].index.tolist()
-            # Buscamos C1, C2 y Pole de forma exacta sin importar espacios fantasmas en las celdas
             filas_c1 = columna_f_graf[columna_f_graf == "C1"].index.tolist()
             filas_c2 = columna_f_graf[columna_f_graf == "C2"].index.tolist()
-            
-            # 🛠️ FILTRO TOLERANTE: Captura "Pole", "Pole " o cualquier variante en tu Columna F
             filas_pole_hoja1 = columna_f_graf[columna_f_graf == "POLE"].index.tolist()
-
             
             indices_pilotos_graf = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
             pilotos_torneo = list(indices_pilotos_graf.keys())
@@ -177,8 +170,11 @@ if opcion == "Resumen":
                 tiene_datos_esta_fecha = False
                 for piloto, col_idx in indices_pilotos_graf.items():
                     val_puntos = df_hoja1_graf.iloc[fila_total, col_idx]
-                    if pd.notna(val_puntos) and float(str(val_puntos).replace(',','.',1)) > 0:
-                        tiene_datos_esta_fecha = True
+                    if pd.notna(val_puntos):
+                        try:
+                            if float(str(val_puntos).replace(',','.',1)) > 0:
+                                tiene_datos_esta_fecha = True
+                        except: pass
                 if tiene_datos_esta_fecha:
                     ultima_fecha_con_datos = idx + 1
 
@@ -189,11 +185,25 @@ if opcion == "Resumen":
                 df_filtrado_resumen.columns = ["Piloto", "Puntos"]
                 titulo_grafico = "Puntos - Campeonato Completo"
             else:
-                df_filtrado_resumen = df_puntos_graf[["PILOTO", fecha_seleccionada]].sort_values(by=fecha_seleccionada, ascending=False).reset_index(drop=True)
-                df_filtrado_resumen.columns = ["Piloto", "Puntos"]
-                titulo_grafico = f"Puntos - {fecha_seleccionada}"
+                try:
+                    import re
+                    numero_fecha_detectado = int(re.findall(r'\d+', str(fecha_seleccionada))) - 1
+                except:
+                    numero_fecha_detectado = 0
+                
+                fila_total_bloque_hoja1 = filas_totales_fecha[numero_fecha_detectado] if numero_fecha_detectado < len(filas_totales_fecha) else filas_totales_fecha[-1]
+                tabla_puntos_fecha_individual = []
+                for piloto_n, col_idx in indices_pilotos_graf.items():
+                    val_puntos_celda = df_hoja1_graf.iloc[fila_total_bloque_hoja1, col_idx]
+                    try:
+                        puntos_limpios_num = float(str(val_puntos_celda).replace(",", ".").strip())
+                    except:
+                        puntos_limpios_num = 0.0
+                    tabla_puntos_fecha_individual.append({"Piloto": piloto_n, "Puntos": puntos_limpios_num})
+                df_filtrado_resumen = pd.DataFrame(tabla_puntos_fecha_individual).sort_values(by="Puntos", ascending=False).reset_index(drop=True)
+                titulo_grafico = f"Puntos Netos - {fecha_seleccionada}"
 
-            # --- TABLA Y GRÁFICO SUPERIOR ---
+            # --- COLUMNAS PRINCIPALES (TABLA Y GRÁFICO) ---
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader(f"📋 Tabla de Posiciones ({fecha_seleccionada})")
@@ -222,18 +232,21 @@ if opcion == "Resumen":
                 fig_barras.update_layout(plot_bgcolor="#161925", paper_bgcolor="#0f111a", margin=dict(l=10, r=10, t=40, b=10), showlegend=False)
                 st.plotly_chart(fig_barras, use_container_width=True, key="resumen_rendimiento_fijo")
 
-            # --- GRÁFICO DE LÍNEAS (EVOLUCIÓN) ---
+            # --- EVOLUCIÓN TEMPORAL LÍNEAS ---
             for idx, fila_total in enumerate(filas_totales_fecha[:ultima_fecha_con_datos]):
                 nombre_fecha_eje_x = f"Fecha {idx + 1}"
                 try:
-                    circuito_real = opciones_fechas_combinadas[idx + 1].split(" - ")[1]
+                    circuito_real = opciones_fechas_combinadas[idx + 1].split(" - ")
                 except:
                     circuito_real = f"Carrera {idx + 1}"
                 
                 for piloto, col_idx in indices_pilotos_graf.items():
                     val_puntos_fecha = df_hoja1_graf.iloc[fila_total, col_idx]
                     puntos_fecha_limpio = str(val_puntos_fecha).replace(',', '.', 1) if pd.notna(val_puntos_fecha) else "0.0"
-                    puntos_fecha = float(puntos_fecha_limpio) if puntos_fecha_limpio.replace('.','',1).isdigit() else 0.0
+                    try:
+                        puntos_fecha = float(puntos_fecha_limpio) if puntos_fecha_limpio.replace('.','',1).isdigit() else 0.0
+                    except:
+                        puntos_fecha = 0.0
                     
                     puntos_acumulados_carrera[piloto] += puntos_fecha
                     if puntos_acumulados_carrera[piloto] > max_puntaje_detectado:
@@ -251,13 +264,11 @@ if opcion == "Resumen":
                     resultado_txt = f"{pos_c1} / {pos_c2}"
 
                     lastre_txt = "0 Kg"
-                    if idx > 0:
-                        idx_bloque_anterior = idx - 1
-                        if idx_bloque_anterior < len(filas_lastre_acum):
-                            fila_lastre_anterior = filas_lastre_acum[idx_bloque_anterior]
-                            val_lastre = df_hoja1_graf.iloc[fila_lastre_anterior, col_idx]
-                            if pd.notna(val_lastre):
-                                lastre_txt = f"{str(val_lastre).upper().replace('KG', '').strip()} Kg"
+                    if idx > 0 and idx - 1 < len(filas_lastre_acum):
+                        fila_lastre_anterior = filas_lastre_acum[idx - 1]
+                        val_lastre = df_hoja1_graf.iloc[fila_lastre_anterior, col_idx]
+                        if pd.notna(val_lastre):
+                            lastre_txt = f"{str(val_lastre).upper().replace('KG', '').strip()} Kg"
                     
                     datos_evolucion_limpios.append({
                         "Piloto": piloto, "Gran Premio": nombre_fecha_eje_x, "Puntos Acumulados": puntos_acumulados_carrera[piloto],
@@ -288,59 +299,99 @@ if opcion == "Resumen":
             posiciones_c1_por_piloto = {p: [] for p in pilotos_torneo}
             posiciones_c2_por_piloto = {p: [] for p in pilotos_torneo}
             poles_totales_por_piloto = {p: 0 for p in pilotos_torneo}
+            efectividad_mangas_totales = {p: [] for p in pilotos_torneo}
 
-            # 🛠️ CONTEO SEGURO DE POLES (Apuntando a las columnas H, J, L, N de puntos reales)
+            # 🛠️ 1. CONTEO DE POLES DESDE TU HOJA1 (FOTO)
             for f_pole in filas_pole_hoja1:
                 for piloto, col_idx in indices_pilotos_graf.items():
                     columna_puntos_idx = col_idx + 1
                     val_pole = df_hoja1_graf.iloc[f_pole, columna_puntos_idx]
-                    
                     if pd.notna(val_pole) and str(val_pole).strip() != "":
-                        try:
-                            # Convertimos el punto cargado manualmente en tu Hoja1
-                            num_puntos_pole = float(str(val_pole).replace(",", ".").strip())
-                            
-                            # Condición exacta: sumamos la pole si y solo si la celda tiene exactamente 1.0 punto
-                            if num_puntos_pole == 1.0:
-                                poles_totales_por_piloto[piloto] += 1
-                        except:
-                            pass
+                                            try:
+                                                texto_pole = str(val_pole).strip().upper().replace(",0", "").replace(".0", "")
+                                                if texto_pole in ["1", "POLE", "1°", "🥇"]:
+                                                    poles_totales_por_piloto[piloto] += 1
+                                            except: pass
 
+            # 🛠️ 2. MOTOR HÍBRIDO AVANZADO (LARGADA DE TIEMPOS VS LLEGADA ESTRICTA DE HOJA1)
+            try:
+                df_tiempos_aux_resumen = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', header=None, engine='openpyxl')
+                df_tiempos_aux_resumen.iloc[:, 0] = df_tiempos_aux_resumen.iloc[:, 0].ffill()
+                col_sesiones_resumen = df_tiempos_aux_resumen.iloc[:, 1].astype(str).str.strip().str.upper().str.replace("Ó", "O", regex=False)
+                indices_pilotos_fechas_resumen = {"Agus": 2, "Pablo": 3, "Juandi": 4, "Eze": 5}
+                filas_clasif_tiempos = df_tiempos_aux_resumen[col_sesiones_resumen.str.contains("CLASIF|POLE", na=False)].index.tolist()
 
-            # Extracción de posiciones promedio desde Hoja1
-            # Recorremos de forma segura cada una de las fechas disputadas
-            for idx_est in range(len(filas_c1)):
-                for piloto, col_idx in indices_pilotos_graf.items():
-                    val_c1 = df_hoja1_graf.iloc[filas_c1[idx_est], col_idx]
-                    if pd.notna(val_c1):
-                        try:
-                            num_c1 = float(str(val_c1).upper().replace("P", "").strip())
-                            if num_c1 > 0: 
-                                posiciones_c1_por_piloto[piloto].append(num_c1)
-                        except: 
-                            pass
+                for idx_est in range(len(filas_c1)):
+                    poleman_fecha = None
+                    if idx_est < len(filas_pole_hoja1):
+                        f_pole_actual = filas_pole_hoja1[idx_est]
+                        for piloto, col_idx in indices_pilotos_graf.items():
+                            val_p_celda = df_hoja1_graf.iloc[f_pole_actual, col_idx + 1]
+                            if pd.notna(val_p_celda) and str(val_p_celda).strip() in ["1", "1.0"]:
+                                poleman_fecha = piloto
+                                break
+
+                    grilla_c1_largada = {p: 4.0 for p in pilotos_torneo}
                     
-                    if idx_est < len(filas_c2):
-                        val_c2 = df_hoja1_graf.iloc[filas_c2[idx_est], col_idx]
-                        if pd.notna(val_c2):
-                            try:
-                                num_c2 = float(str(val_c2).upper().replace("P", "").strip())
-                                if num_c2 > 0: 
-                                    posiciones_c2_por_piloto[piloto].append(num_c2)
-                            except: 
-                                pass
-                    
-                    if idx_est < len(filas_c2):
-                        val_c2 = df_hoja1_graf.iloc[filas_c2[idx_est], col_idx]
-                        if pd.notna(val_c2):
-                            try:
-                                num_c2 = float(str(val_c2).upper().replace("P", "").strip())
-                                if num_c2 > 0: 
-                                    posiciones_c2_por_piloto[piloto].append(num_c2)
-                            except: 
-                                pass
+                    if idx_est < len(filas_clasif_tiempos):
+                        f_qualy = filas_clasif_tiempos[idx_est]
+                        tiempos_fecha = {}
+                        for p, col_idx in indices_pilotos_fechas_resumen.items():
+                            seg = tiempo_a_segundos(df_tiempos_aux_resumen.iloc[f_qualy, col_idx])
+                            if seg is not None and seg > 30.0 and p != poleman_fecha:
+                                tiempos_fecha[p] = seg
+                        
+                        if poleman_fecha:
+                            grilla_c1_largada[poleman_fecha] = 1.0
+                        
+                        if tiempos_fecha:
+                            pilotos_restantes_ordenados = sorted(tiempos_fecha, key=tiempos_fecha.get)
+                            puesto_disponible = 2.0
+                            for p_name in pilotos_restantes_ordenados:
+                                grilla_c1_largada[p_name] = puesto_disponible
+                                puesto_disponible += 1.0
 
-            # --- COMPILACIÓN DEL REPORTE FINAL ---
+                    for piloto, col_idx in indices_pilotos_graf.items():
+                        val_c1 = df_hoja1_graf.iloc[filas_c1[idx_est], col_idx]
+                        if pd.notna(val_c1):
+                            try:
+                                llegada_c1 = float(str(val_c1).upper().replace("P", "").strip())
+                                if llegada_c1 > 0:
+                                    posiciones_c1_por_piloto[piloto].append(llegada_c1)
+                                    largada_c1 = grilla_c1_largada[piloto]
+                                    
+                                    if largada_c1 == llegada_c1:
+                                        efec_c1 = 100.0
+                                    elif largada_c1 > llegada_c1:
+                                        efec_c1 = ((largada_c1 - llegada_c1) / (largada_c1 - 1.0)) * 100
+                                    else:
+                                        efec_c1 = (((4.0 - largada_c1) - (llegada_c1 - largada_c1)) / (4.0 - largada_c1)) * 100
+                                    
+                                    efectividad_mangas_totales[piloto].append(efec_c1)
+                            except: pass
+
+                    if idx_est < len(filas_c2):
+                        for piloto, col_idx in indices_pilotos_graf.items():
+                            val_c2 = df_hoja1_graf.iloc[filas_c2[idx_est], col_idx]
+                            if pd.notna(val_c2):
+                                try:
+                                    llegada_c2 = float(str(val_c2).upper().replace("P", "").strip())
+                                    if llegada_c2 > 0:
+                                        posiciones_c2_por_piloto[piloto].append(llegada_c2)
+                                        largada_c2 = 5.0 - grilla_c1_largada[piloto]
+                                        
+                                        if largada_c2 == llegada_c2:
+                                            efec_c2 = 100.0
+                                        elif largada_c2 > llegada_c2:
+                                            efec_c2 = ((largada_c2 - llegada_c2) / (largada_c2 - 1.0)) * 100
+                                        else:
+                                            efec_c2 = (((4.0 - largada_c2) - (llegada_c2 - largada_c2)) / (4.0 - largada_c2)) * 100
+                                        
+                                        efectividad_mangas_totales[piloto].append(efec_c2)
+                                except: pass
+            except Exception as e_proc:
+                st.warning(f"Aviso en cálculo de grillas: {e_proc}")
+                            # --- COMPILACIÓN DEL REPORTE FINAL ---
             reporte_tarjetas = []
             for piloto in pilotos_torneo:
                 lista_c1 = posiciones_c1_por_piloto.get(piloto, [])
@@ -349,42 +400,36 @@ if opcion == "Resumen":
                 prom_c2 = sum(lista_c2) / len(lista_c2) if lista_c2 else 0.0
                 poles_reales = poles_totales_por_piloto.get(piloto, 0)
                 
+                lista_efec = efectividad_mangas_totales.get(piloto, [])
+                prom_efec_carrera = sum(lista_efec) / len(lista_efec) if lista_efec else 0.0
+                
+                gps_disputados_c1 = len(lista_c1)
+                porcentaje_efectividad_pole = (poles_reales / gps_disputados_c1) * 100 if gps_disputados_c1 > 0 else 0.0
+                
                 total_mangas = lista_c1 + lista_c2
                 prom_general = sum(total_mangas) / len(total_mangas) if total_mangas else 0.0
 
                 reporte_tarjetas.append({
-                    "Piloto": piloto, 
-                    "Promedio C1": prom_c1 if prom_c1 > 0 else 99.0,
-                    "Promedio C2": prom_c2 if prom_c2 > 0 else 99.0, 
-                    "Promedio General": prom_general if prom_general > 0 else 99.0,
-                    "Poles": poles_reales
+                    "Piloto": piloto, "Promedio C1": prom_c1, "Promedio C2": prom_c2, 
+                    "Promedio General": prom_general, "Poles": poles_reales,
+                    "Efectividad_Pole": porcentaje_efectividad_pole,
+                    "Efectividad_Carrera": prom_efec_carrera,
+                    "GPs": gps_disputados_c1
                 })
 
             df_reporte_tarjetas = pd.DataFrame(reporte_tarjetas).sort_values(by="Promedio General")
 
-            # --- MAQUILLAJE DE LAS TARJETAS (ESTILO LASTRE) ---
+            # --- RENDERIZADO DE LAS TARJETAS (ESTILO LASTRE - FOTO 2) ---
             st.markdown("""
             <style>
             .tarjeta-simulacion-f1 {
-                background-color: #161925;
-                border-left: 5px solid #e10600;
-                border-radius: 10px;
-                padding: 18px;
-                margin-bottom: 15px;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+                background-color: #161925; border-left: 5px solid #e10600; border-radius: 10px;
+                padding: 18px; margin-bottom: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
             }
-            .titulo-simulacion-f1 {
-                margin: 0; font-size: 11px; color: #9fa6b2; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;
-            }
-            .piloto-simulacion-f1 {
-                margin: 0; padding: 4px 0; color: #ffffff; font-size: 26px; font-weight: bold;
-            }
-            .divisor-simulacion-f1 {
-                margin: 8px 0; border-color: #2a2f45;
-            }
-            .bloque-valores-f1 {
-                display: flex; justify-content: space-between; align-items: center;
-            }
+            .titulo-simulacion-f1 { margin: 0; font-size: 11px; color: #9fa6b2; text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
+            .piloto-simulacion-f1 { margin: 0; padding: 4px 0; color: #ffffff; font-size: 26px; font-weight: bold; }
+            .divisor-simulacion-f1 { margin: 8px 0; border-color: #2a2f45; }
+            .bloque-valores-f1 { display: flex; justify-content: space-between; align-items: center; }
             .sub-metrica-f1 { text-align: left; }
             .sub-metrica-der-f1 { text-align: right; }
             .texto-gris-f1 { margin: 0; font-size: 12px; color: #9fa6b2; }
@@ -396,27 +441,32 @@ if opcion == "Resumen":
             cols_grid = st.columns(4)
             for idx_c, row in df_reporte_tarjetas.reset_index(drop=True).iterrows():
                 p_name = row["Piloto"]
-                p_gen = f"P{row['Promedio General']:.1f}" if row["Promedio General"] != 99.0 else "-"
-                p_c1 = f"P{row['Promedio C1']:.1f}" if row["Promedio C1"] != 99.0 else "-"
-                p_c2 = f"P{row['Promedio C2']:.1f}" if row["Promedio C2"] != 99.0 else "-"
+                p_gen = f"P{row['Promedio General']:.1f}" if row["Promedio General"] > 0 else "-"
+                p_c1 = f"P{row['Promedio C1']:.1f}" if row["Promedio C1"] > 0 else "-"
+                p_c2 = f"P{row['Promedio C2']:.1f}" if row["Promedio C2"] > 0 else "-"
                 p_poles = int(row["Poles"])
+                p_efec_pole = row["Efectividad_Pole"]
+                p_efec_carrera = row["Efectividad_Carrera"]
+                p_gps = int(row["GPs"])
                 
                 color_borde_pista = "#00e676" if idx_c == 0 else "#e10600"
                 
                 with cols_grid[idx_c % 4]:
                     st.markdown(f"""
                         <div class="tarjeta-simulacion-f1" style="border-left: 5px solid {color_borde_pista};">
-                            <p class="titulo-simulacion-f1">Rendimiento en Pista</p>
+                            <p class="titulo-simulacion-f1">Rendimiento en Pista ({p_gps} GPs)</p>
                             <h3 class="piloto-simulacion-f1">{p_name}</h3>
                             <hr class="divisor-simulacion-f1">
                             <div class="bloque-valores-f1">
                                 <div class="sub-metrica-f1">
                                     <p class="texto-gris-f1">Ritmo General:</p>
                                     <p class="texto-blanco-bold-f1" style="color: #00e676;">{p_gen}</p>
+                                    <p class="texto-gris-f1" style="font-size:11px; margin-top:4px; color: #ff9100; font-weight:bold;">🏁 Efec. Race: {p_efec_carrera:.1f}%</p>
                                 </div>
                                 <div class="sub-metrica-der-f1">
-                                    <p class="texto-gris-f1">Poles / C1 / C2:</p>
-                                    <p class="texto-rojo-bold-f1" style="color: #00b0ff;">🥇 {p_poles} <span style="color:#ffffff; font-size:11px; font-weight:normal;">({p_c1}/{p_c2})</span></p>
+                                    <p class="texto-gris-f1">Poles (Sábado):</p>
+                                    <p class="texto-rojo-bold-f1" style="color: #00b0ff; font-size:22px;">🥇 {p_poles}</p>
+                                    <p class="texto-gris-f1" style="font-size:11px; margin-top:4px; color: #9fa6b2;">⚡ Efec. Pole: {p_efec_pole:.1f}%</p>
                                 </div>
                             </div>
                         </div>
@@ -426,10 +476,12 @@ if opcion == "Resumen":
             st.dataframe(
                 df_reporte_tarjetas.assign(
                     **{
-                        "Promedio General": lambda x: x["Promedio General"].apply(lambda v: f"P{v:.1f}" if v != 99.0 else "-"),
-                        "Promedio C1": lambda x: x["Promedio C1"].apply(lambda v: f"P{v:.1f}" if v != 99.0 else "-"),
-                        "Promedio C2": lambda x: x["Promedio C2"].apply(lambda v: f"P{v:.1f}" if v != 99.0 else "-"),
-                        "Poles": lambda x: x["Poles"].apply(lambda v: f"🥇 {int(v)} Poles")
+                        "Promedio General": lambda x: x["Promedio General"].apply(lambda v: f"P{v:.1f}" if v > 0 else "-"),
+                        "Promedio C1": lambda x: x["Promedio C1"].apply(lambda v: f"P{v:.1f}" if v > 0 else "-"),
+                        "Promedio C2": lambda x: x["Promedio C2"].apply(lambda v: f"P{v:.1f}" if v > 0 else "-"),
+                        "Poles": lambda x: x["Poles"].apply(lambda v: f"🥇 {int(v)} Poles"),
+                        "Efectividad_Pole": lambda x: x["Efectividad_Pole"].apply(lambda v: f"{v:.1f}%"),
+                        "Efectividad_Carrera": lambda x: x["Efectividad_Carrera"].apply(lambda v: f"{v:.1f}%")
                     }
                 ),
                 use_container_width=True, hide_index=True
@@ -442,6 +494,8 @@ if opcion == "Resumen":
 
         except Exception as e:
             st.error(f"Error general en la pestaña Resumen: {e}")
+
+
 
 elif opcion == "Comparativa de Tiempos":
     st.title("⏱️ Diferencia de Ritmo y Poles (Histórico vs Fecha)")
@@ -486,50 +540,9 @@ elif opcion == "Comparativa de Tiempos":
             except:
                 return f"{segundos_totales:.3f}s"
 
-        # --- SECCIÓN CSS UNIFICADA PARA LAS NUEVAS TARJETAS ---
-        st.markdown("""
-        <style>
-        .columna-tiempos-box {
-            background-color: #0f111a;
-            border: 1px solid #2a2f45;
-            border-radius: 12px;
-            padding: 15px;
-            margin-bottom: 20px;
-        }
-        .tarjeta-tiempo-f1 {
-            background-color: #161925;
-            border-left: 5px solid #e10600;
-            border-radius: 8px;
-            padding: 10px 14px;
-            margin-bottom: 10px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-        }
-        .info-izq-tiempo {
-            display: flex;
-            flex-direction: column;
-        }
-        .piloto-tiempo-f1 {
-            color: #ffffff;
-            font-size: 15px;
-            font-weight: bold;
-        }
-        .tiempo-vuelta-f1 {
-            color: #00ff88;
-            font-size: 13px;
-            font-family: monospace;
-            margin-top: 1px;
-        }
-        .gap-der-tiempo {
-            text-align: right;
-            font-size: 14px;
-            font-weight: bold;
-            font-family: monospace;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+        css_tiempos = """<style>.columna-tiempos-box { background-color: #0f111a; border: 1px solid #2a2f45; border-radius: 12px; padding: 15px; margin-bottom: 20px; } .tarjeta-tiempo-f1 { background-color: #161925; border-left: 5px solid #e10600; border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 8px rgba(0,0,0,0.3); } .info-izq-tiempo { display: flex; flex-direction: column; } .piloto-tiempo-f1 { color: #ffffff; font-size: 15px; font-weight: bold; } .tiempo-vuelta-f1 { color: #00ff88; font-size: 13px; font-family: monospace; margin-top: 1px; } .gap-der-tiempo { text-align: right; font-size: 14px; font-weight: bold; font-family: monospace; }</style>"""
+        st.markdown(css_tiempos, unsafe_allow_html=True)
+
 
         # =========================================================================
         # 📈 DETECTOR COMPLETO PARA EL CAMPEONATO COMPLETO
