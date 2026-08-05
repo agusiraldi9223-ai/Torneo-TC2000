@@ -836,89 +836,84 @@ elif opcion == "Lastre":
         st.warning(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")
 
 elif opcion == "Posiciones":
-    st.title("🏆 Centro de Cómputos del Campeonato")
-    st.write("Análisis interactivo de puntajes por fecha y evolución de la tabla general.")
-
     if os.path.exists(ARCHIVO_EXCEL):
-        try:
-            # Leemos la Hoja1 de forma nativa sin procesar encabezados
-            df_hoja1 = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
+        # Leemos la Hoja1 de forma nativa sin procesar encabezados
+        df_hoja1 = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
+        
+        # Convertimos la columna F a texto limpio para mapear las filas clave
+        columna_f = df_hoja1.iloc[:, 5].astype(str).str.strip().str.upper()
+        filas_total_fecha = columna_f[columna_f == "TOTAL FECHA"].index.tolist()
+        
+        indices_pilotos_pos = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
+        total_fechas_detectedas = len(filas_total_fecha)
+        
+        if total_fechas_detectedas > 0:
+            # # 1. SELECTOR INTERACTIVO DE FECHAS
+            opciones_fechas = [f"Fecha {i}" for i in range(1, total_fechas_detectedas + 1)]
+            fecha_seleccionada = st.selectbox("Seleccionar Fecha a Consultar:", opciones_fechas, index=total_fechas_detectedas - 1)
+            idx_fecha_sel = int(fecha_seleccionada.split()[-1]) - 1
             
-            # Convertimos la columna F a texto limpio para mapear las filas clave
-            columna_f = df_hoja1.iloc[:, 5].astype(str).str.strip().str.upper()
+            # # 2. CÁLCULO MATEMÁTICO BASADO EN TU EXCEL DE 13 FILAS POR FECHA
+            fila_total_fecha_actual = 7 + (idx_fecha_sel * 13)
+            fila_total_acumulado = 9 + (idx_fecha_sel * 13)
             
-            # Buscamos de forma estricta todas las filas que dicen exactamente "TOTAL FECHA"
-            filas_total_fecha = columna_f[columna_f == "TOTAL FECHA"].index.tolist()
+            tabla_fecha_pura = []
+            tabla_campeonato_historico = []
             
-            # Coordenadas de columnas de pilotos: G=Agus(6), I=Pablo(8), K=Juandi(10), M=Eze(12)
-            indices_pilotos_pos = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
-            
-            total_fechas_detectadas = len(filas_total_fecha)
-            
-            if total_fechas_detectadas > 0:
-                # 1. SELECTOR INTERACTIVO DE FECHAS
-                opciones_fechas = [f"Fecha {i}" for i in range(1, total_fechas_detectadas + 1)]
-                fecha_seleccionada = st.selectbox("Seleccionar Fecha a Consultar:", opciones_fechas, index=total_fechas_detectadas-1)
-                idx_fecha_sel = int(fecha_seleccionada.split()[-1]) - 1  
+            # # 3. BUCLE PARA RECORRER CADA PILOTO
+            for piloto, col_idx in indices_pilotos_pos.items():
+                puntos_fecha_puros = 0.0
+                puntos_acumulados_historicos = 0.0
                 
-                # Fila base de "TOTAL FECHA" para la carrera elegida
-                fila_total_fecha_actual = filas_total_fecha[idx_fecha_sel]
-                # Fila de "TOTAL" acumulado (siempre 2 renglones más abajo)
-                fila_total_acumulado = fila_total_fecha_actual + 2
-                
-                tabla_fecha_pura = []
-                tabla_campeonato_historico = []
-                
-                for piloto, col_idx in indices_pilotos_pos.items():
-                    puntos_fecha_puros = 0.0
-                    puntos_acumulados_historicos = 0.0
-                    
-                    # A. Leemos los puntos netos de la fecha (Limpiando textos ocultos de Excel)
-                    if fila_total_fecha_actual < len(df_hoja1):
-                        val_fecha = str(df_hoja1.iloc[fila_total_fecha_actual, col_idx]).replace(',', '.').strip()
-                        puntos_fecha_puros = pd.to_numeric(val_fecha, errors='coerce')
-                        if pd.isna(puntos_fecha_puros): puntos_fecha_puros = 0.0
-                    
-                    # B. Leemos los puntos del TOTAL acumulado (Forzando la conversión matemática)
-                    if fila_total_acumulado < len(df_hoja1):
-                        val_acum = str(df_hoja1.iloc[fila_total_acumulado, col_idx]).replace(',', '.').strip()
-                        puntos_acumulados_historicos = pd.to_numeric(val_acum, errors='coerce')
-                        if pd.isna(puntos_acumulados_historicos): puntos_acumulados_historicos = 0.0
+                # A. Lectura de puntos de la fecha elegida
+                if fila_total_fecha_actual < len(df_hoja1):
+                    val_fecha = str(df_hoja1.iloc[fila_total_fecha_actual, col_idx]).replace(',', '.').strip()
+                    try:
+                        puntos_fecha_puros = float(val_fecha) if val_fecha not in ['nan', 'None', ''] else 0.0
+                    except ValueError:
+                        puntos_fecha_puros = 0.0
                         
-                    tabla_fecha_pura.append({"Piloto": piloto, "Puntos de la Fecha": puntos_fecha_puros})
-                    tabla_campeonato_historico.append({"Piloto": piloto, "Puntos Totales": puntos_acumulados_historicos})
+                # B. Lectura de puntos acumulados históricos
+                if fila_total_acumulado < len(df_hoja1):
+                    val_acum = str(df_hoja1.iloc[fila_total_acumulado, col_idx]).replace(',', '.').strip()
+                    try:
+                        puntos_acumulados_historicos = float(val_acum) if val_acum not in ['nan', 'None', ''] else 0.0
+                    except ValueError:
+                        puntos_acumulados_historicos = 0.0
+                        
+                tabla_fecha_pura.append({"Piloto": piloto, "Puntos de la Fecha": puntos_fecha_puros})
+                tabla_campeonato_historico.append({"Piloto": piloto, "Puntos Totales": puntos_acumulados_historicos})
                 
-                # Armamos y ordenamos los dos DataFrames
-                df_fecha_ordenado = pd.DataFrame(tabla_fecha_pura).sort_values(by="Puntos de la Fecha", ascending=False).reset_index(drop=True)
-                df_campeonato_ordenado = pd.DataFrame(tabla_campeonato_historico).sort_values(by="Puntos Totales", ascending=False).reset_index(drop=True)
+            # # 4. ARMADO DE DATAFRAMES FINALES
+            df_fecha_ordenado = pd.DataFrame(tabla_fecha_pura).sort_values(by="Puntos de la Fecha", ascending=False).reset_index(drop=True)
+            df_campeonato_ordenado = pd.DataFrame(tabla_campeonato_historico).sort_values(by="Puntos Totales", ascending=False).reset_index(drop=True)
                 
-                # 2. DISEÑO VISUAL EN LA APP (Dividido en dos columnas principales)
-                izq, der = st.columns(2)
+            # 2. DISEÑO VISUAL EN LA APP (Dividido en dos columnas principales)
+            izq, der = st.columns(2)
                 
-                with izq:
-                    st.subheader(f"🏁 Clasificador de la {fecha_seleccionada}")
-                    st.write("Puntaje neto obtenido únicamente en este circuito.")
-                    st.dataframe(df_fecha_ordenado, use_container_width=True, hide_index=True)
+            with izq:
+                st.subheader(f"🏁 Clasificador de la {fecha_seleccionada}")
+                st.write("Puntaje neto obtenido únicamente en este circuito.")
+                st.dataframe(df_fecha_ordenado, use_container_width=True, hide_index=True)
+                
+                fig_fecha = px.bar(df_fecha_ordenado, x="Piloto", y="Puntos de la Fecha", color="Piloto",
+                                    color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
+                fig_fecha.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig_fecha, use_container_width=True, key="grafico_fecha_pura")
+                
+            with der:
+                st.subheader(f"🏆 Posiciones Generales (A la {fecha_seleccionada})")
+                st.write("Tabla acumulada histórica con el cierre de esta carrera.")
+                st.dataframe(df_campeonato_ordenado, use_container_width=True, hide_index=True)
+                
+                fig_camp = px.bar(df_campeonato_ordenado, x="Piloto", y="Puntos Totales", color="Piloto",
+                                    color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
+                fig_camp.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig_camp, use_container_width=True, key="grafico_campeonato_acumulado")
                     
-                    fig_fecha = px.bar(df_fecha_ordenado, x="Piloto", y="Puntos de la Fecha", color="Piloto",
-                                       color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
-                    fig_fecha.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-                    st.plotly_chart(fig_fecha, use_container_width=True, key="grafico_fecha_pura")
-                    
-                with der:
-                    st.subheader(f"🏆 Posiciones Generales (A la {fecha_seleccionada})")
-                    st.write("Tabla acumulada histórica con el cierre de esta carrera.")
-                    st.dataframe(df_campeonato_ordenado, use_container_width=True, hide_index=True)
-                    
-                    fig_camp = px.bar(df_campeonato_ordenado, x="Piloto", y="Puntos Totales", color="Piloto",
-                                      color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
-                    fig_camp.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-                    st.plotly_chart(fig_camp, use_container_width=True, key="grafico_campeonato_acumulado")
-                    
-            else:
-                st.warning("No se detectaron las celdas de 'TOTAL FECHA' en tu 'Hoja1'.")
-        except Exception as e:
-            st.error(f"Error al procesar el centro de cómputos: {e}")
+        else:
+            st.warning("No se detectaron las celdas de 'TOTAL FECHA' en tu 'Hoja1'.")
+        
     else:
         st.warning(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")
 
