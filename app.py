@@ -285,8 +285,9 @@ if opcion == "Resumen":
                 )
                 fig_evolucion.update_traces(
                     line=dict(width=3.5), marker=dict(size=8),
-                    hovertemplate="🏎️ <b>Piloto:</b> %{customdata}<br>📍 <b>Circuito:</b> %{customdata}<br>🏁 <b>Resultado (C1/C2):</b> %{customdata}<br>🏆 <b>Puntos Acumulados:</b> %{y:.2f} pts<br>⚖️ <b>Lastre Inicial:</b> %{customdata}<extra></extra>"
+                    hovertemplate="<br><b>Piloto:</b> %{customdata[3]}<br>📍 <b>Circuito:</b> %{customdata[0]}<br>🏁 <b>Resultado (C1/C2):</b> %{customdata[1]}<br>⚖️ <b>Lastre Inicial:</b> %{customdata[2]} <br>🏆 <b>Puntos Acumulados:</b> %{y} pts<extra></extra>"
                 )
+
                 fig_evolucion.update_layout(hovermode="closest", plot_bgcolor="#161925", paper_bgcolor="#0f111a", margin=dict(l=20, r=20, t=20, b=20), height=400)
                 st.plotly_chart(fig_evolucion, use_container_width=True, key="evolucion_lineas_resumen_fijo")
 
@@ -491,6 +492,7 @@ if opcion == "Resumen":
             max_poles = poles_totales_por_piloto[rey_pole]
             if max_poles > 0:
                 st.success(f"⏱️ **Rey de los Sábados:** El piloto con más Pole Positions es **{rey_pole}** con un total de **{max_poles} Poles**.")
+                st.caption("ℹ️ **Nota sobre la Efectividad de Carrera:** Este porcentaje se calcula dividiendo los puntos totales que sumó el piloto en la fecha sobre el máximo de puntos teóricos posibles a obtener en esa carrera (Pole Position + Victoria + Vuelta Rápida).")
 
         except Exception as e:
             st.error(f"Error general en la pestaña Resumen: {e}")
@@ -757,7 +759,7 @@ elif opcion == "Lastre":
             # =========================================================================
             st.markdown("---")
             st.subheader("🏋️ Análisis de Rendimiento con Lastre Técnico")
-            st.write("Evaluación histórica del promedio de puntos sumados y la cantidad de fechas disputadas en cada rango de peso:")
+            st.write("Evaluación histórica del promedio de puntos sumados en relacion a los Kg cargados:")
 
             rangos_peso = ["0-20 Kg", "21-40 Kg", "41-60 Kg", "61-80 Kg+"]
             historial_peso_puntos = {p: {r: [] for r in rangos_peso} for p in pilotos_torneo}
@@ -837,83 +839,64 @@ elif opcion == "Lastre":
 
 elif opcion == "Posiciones":
     if os.path.exists(ARCHIVO_EXCEL):
-        # Leemos la Hoja1 de forma nativa sin procesar encabezados
+        # 1. CARGA DIRECTA Y FRESCA DE LA HOJA1 EN CADA MOVIMIENTO DEL SELECTOR
         df_hoja1 = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
         
-        # Convertimos la columna F a texto limpio para mapear las filas clave
-        columna_f = df_hoja1.iloc[:, 5].astype(str).str.strip().str.upper()
-        filas_total_fecha = columna_f[columna_f == "TOTAL FECHA"].index.tolist()
-        
-        indices_pilotos_pos = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
-        total_fechas_detectedas = len(filas_total_fecha)
-        
-        if total_fechas_detectedas > 0:
-            # # 1. SELECTOR INTERACTIVO DE FECHAS
-            opciones_fechas = [f"Fecha {i}" for i in range(1, total_fechas_detectedas + 1)]
-            fecha_seleccionada = st.selectbox("Seleccionar Fecha a Consultar:", opciones_fechas, index=total_fechas_detectedas - 1)
-            idx_fecha_sel = int(fecha_seleccionada.split()[-1]) - 1
+        # # USAMOS LA TABLA GLOBAL QUE NUNCA FALLA Y YA TIENE LAS FECHAS COMPUTADAS
+        # Buscamos en qué posición (0 para Fecha 1, 7 para Fecha 8) está el circuito que eligieron
+        idx_fecha_sel = opciones_fechas_combinadas.index(fecha_seleccionada) if fecha_seleccionada in opciones_fechas_combinadas else 0
+
+        tabla_fecha_pura = []
+        tabla_campeonato_historico = []
+
+        # Recorremos los 4 pilotos de tu torneo de Assetto Corsa
+        for piloto in ["Agus", "Pablo", "Juandi", "Eze"]:
+            # Filtramos el historial ordenado de ese piloto en el DataFrame del gráfico
+            datos_piloto = df_melted_evolucion[df_melted_evolucion['Piloto'] == piloto].reset_index(drop=True)
             
-            # # 2. CÁLCULO MATEMÁTICO BASADO EN TU EXCEL DE 13 FILAS POR FECHA
-            fila_total_fecha_actual = 7 + (idx_fecha_sel * 13)
-            fila_total_acumulado = 9 + (idx_fecha_sel * 13)
+            puntos_fecha_puros = 0.0
+            puntos_acumulados_historicos = 0.0
             
-            tabla_fecha_pura = []
-            tabla_campeonato_historico = []
-            
-            # # 3. BUCLE PARA RECORRER CADA PILOTO
-            for piloto, col_idx in indices_pilotos_pos.items():
-                puntos_fecha_puros = 0.0
-                puntos_acumulados_historicos = 0.0
+            if idx_fecha_sel < len(datos_piloto):
+                # Extraemos el total acumulado real que llevaba hasta esa fecha exacta
+                puntos_acumulados_historicos = float(datos_piloto.iloc[idx_fecha_sel]['Puntos Acumulados'])
                 
-                # A. Lectura de puntos de la fecha elegida
-                if fila_total_fecha_actual < len(df_hoja1):
-                    val_fecha = str(df_hoja1.iloc[fila_total_fecha_actual, col_idx]).replace(',', '.').strip()
-                    try:
-                        puntos_fecha_puros = float(val_fecha) if val_fecha not in ['nan', 'None', ''] else 0.0
-                    except ValueError:
-                        puntos_fecha_puros = 0.0
-                        
-                # B. Lectura de puntos acumulados históricos
-                if fila_total_acumulado < len(df_hoja1):
-                    val_acum = str(df_hoja1.iloc[fila_total_acumulado, col_idx]).replace(',', '.').strip()
-                    try:
-                        puntos_acumulados_historicos = float(val_acum) if val_acum not in ['nan', 'None', ''] else 0.0
-                    except ValueError:
-                        puntos_acumulados_historicos = 0.0
-                        
-                tabla_fecha_pura.append({"Piloto": piloto, "Puntos de la Fecha": puntos_fecha_puros})
-                tabla_campeonato_historico.append({"Piloto": piloto, "Puntos Totales": puntos_acumulados_historicos})
-                
-            # # 4. ARMADO DE DATAFRAMES FINALES
-            df_fecha_ordenado = pd.DataFrame(tabla_fecha_pura).sort_values(by="Puntos de la Fecha", ascending=False).reset_index(drop=True)
-            df_campeonato_ordenado = pd.DataFrame(tabla_campeonato_historico).sort_values(by="Puntos Totales", ascending=False).reset_index(drop=True)
+                if idx_fecha_sel == 0:
+                    # En la Fecha 1, los puntos de la carrera son iguales al acumulado
+                    puntos_fecha_puros = puntos_acumulados_historicos
+                else:
+                    # Aplicamos tu fórmula: Acumulado de hoy MENOS acumulado de la fecha anterior
+                    puntos_acum_anterior = float(datos_piloto.iloc[idx_fecha_sel - 1]['Puntos Acumulados'])
+                    puntos_fecha_puros = puntos_acumulados_historicos - puntos_acum_anterior
+
+            tabla_fecha_pura.append({"Piloto": piloto, "Puntos de la Fecha": puntos_fecha_puros})
+            tabla_campeonato_historico.append({"Piloto": piloto, "Puntos Totales": puntos_acumulados_historicos})
+
+        # 5. CREACIÓN Y ORDENAMIENTO DE LAS TABLAS (Conecta directo con tu código visual de abajo)
+        df_fecha_ordenado = pd.DataFrame(tabla_fecha_pura).sort_values(by="Puntos de la Fecha", ascending=False).reset_index(drop=True)
+        df_campeonato_ordenado = pd.DataFrame(tabla_campeonato_historico).sort_values(by="Puntos Totales", ascending=False).reset_index(drop=True)
+        
                 
             # 2. DISEÑO VISUAL EN LA APP (Dividido en dos columnas principales)
-            izq, der = st.columns(2)
+        izq, der = st.columns(2)
                 
-            with izq:
-                st.subheader(f"🏁 Clasificador de la {fecha_seleccionada}")
-                st.write("Puntaje neto obtenido únicamente en este circuito.")
-                st.dataframe(df_fecha_ordenado, use_container_width=True, hide_index=True)
-                
-                fig_fecha = px.bar(df_fecha_ordenado, x="Piloto", y="Puntos de la Fecha", color="Piloto",
-                                    color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
-                fig_fecha.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_fecha, use_container_width=True, key="grafico_fecha_pura")
-                
-            with der:
-                st.subheader(f"🏆 Posiciones Generales (A la {fecha_seleccionada})")
-                st.write("Tabla acumulada histórica con el cierre de esta carrera.")
-                st.dataframe(df_campeonato_ordenado, use_container_width=True, hide_index=True)
-                
-                fig_camp = px.bar(df_campeonato_ordenado, x="Piloto", y="Puntos Totales", color="Piloto",
-                                    color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
-                fig_camp.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_camp, use_container_width=True, key="grafico_campeonato_acumulado")
-                    
-        else:
-            st.warning("No se detectaron las celdas de 'TOTAL FECHA' en tu 'Hoja1'.")
-        
+        with izq:
+            st.subheader(f"🏁 Clasificador de la {fecha_seleccionada}")
+            st.write("Puntaje neto obtenido únicamente en este circuito.")
+            st.dataframe(df_fecha_ordenado, use_container_width=True, hide_index=True)
+            
+            fig_fecha = px.bar(df_fecha_ordenado, x="Piloto", y="Puntos de la Fecha", color="Piloto",
+                                color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
+            fig_fecha.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig_fecha, use_container_width=True, key="grafico_fecha_pura")
+            
+        with der:
+            st.subheader(f"🏆 Posiciones Generales (A la {fecha_seleccionada})")
+            st.write("Tabla acumulada histórica con el cierre de esta carrera.")
+            st.dataframe(df_campeonato_ordenado, use_container_width=True, hide_index=True)
+            
+
+    
     else:
         st.warning(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")
 
@@ -1292,7 +1275,7 @@ elif opcion == "Simulador de Campeonato":
                 ultima_fecha_real_num = idx + 1
 
         if ultima_fecha_real_num == 0:
-            ultima_fecha_real_num = 7
+            ultima_fecha_real_num = 8
 
         filas_lastre_fecha_real = columna_f_sim[columna_f_sim.str.contains("LASTRE FECHA|LASTRE.*FECHA", na=False)].index.tolist()
         filas_lastre_acum_real = columna_f_sim[columna_f_sim.str.contains("LASTRE ACUMULADO|LASTRE.*ACUM", na=False)].index.tolist()
