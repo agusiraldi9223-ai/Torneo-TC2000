@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
+import datetime
 
 # 1. CONFIGURACIÓN DE LA PÁGINA
 st.set_page_config(
@@ -29,44 +30,17 @@ st.markdown("""
 
 # Nombre de tu archivo local
 ARCHIVO_EXCEL = "Torneo.xlsx"
-# =========================================================================
-# 🏎️ GENERADOR DINÁMICO DE OPCIONES PARA LOS DESPLEGABLES (FECHA + CIRCUITO)
-# =========================================================================
-opciones_fechas_combinadas = ["Campeonato Completo"]
 
-try:
-    # Leemos la pestaña sin asumir nombres de columnas (header=None)
-    df_crudo_aux = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', header=None, engine='openpyxl')
-    
-    # Rellenamos hacia abajo la columna A para quitar los huecos de celdas vacías/combinadas
-    columna_a_rellenada = df_crudo_aux.iloc[:, 0].ffill()
-    
-    # Extraemos los nombres únicos en estricto orden de aparición en el Excel
-    circuitos_detectados = []
-    for c in columna_a_rellenada.dropna().astype(str).str.strip():
-        # Filtramos valores basura o nombres de pilotos que puedan colarse en la primera fila
-        c_upper = c.upper()
-        if c_upper not in [x.upper() for x in circuitos_detectados] and c != "" and "NAN" not in c_upper and not c_upper.startswith("FECHA"):
-            circuitos_detectados.append(c)
-    
-    # Armamos la lista impecable: "Fecha 1 - CABALEN", "Fecha 2 - LA PLATA", etc.
-    for idx, nombre_circuito in enumerate(circuitos_detectados):
-        opciones_fechas_combinadas.append(f"Fecha {idx + 1} - {nombre_circuito}")
-        
-except Exception as e:
-    # Respaldo de seguridad por si el archivo está bloqueado o da un error inesperado
-    opciones_fechas_combinadas = ["Campeonato Completo"] + [f"Fecha {i}" for i in range(1, 11)]
+# =========================================================================
+# FUNCIONES AUXILIARES DE TIEMPOS
 # =========================================================================
 
-
-# Función para convertir el texto "01:29,228" o "01:31,859" a segundos decimales puros
 def tiempo_a_segundos(tiempo_str):
-    import datetime
     try:
         if pd.isna(tiempo_str):
             return None
         
-        # 1. Si Excel lo guardó como objeto de tiempo nativo (datetime.time)
+        # 1. Si Excel lo guardó como objeto de tiempo nativo
         if isinstance(tiempo_str, (datetime.time, datetime.datetime)):
             total_segundos = (tiempo_str.minute * 60) + tiempo_str.second + (tiempo_str.microsecond / 1000000.0)
             if total_segundos <= 5.0:
@@ -95,29 +69,89 @@ def tiempo_a_segundos(tiempo_str):
     except:
         return None
 
-    # Función para dar formato F1 "+0.123" a las diferencias de tiempo
 def formato_diferencia(segundos):
     if segundos == 0:
         return "0.000"
     return f"+{segundos:.3f}"
 
-# Función inteligente para leer el archivo local mapeando las hojas reales
-def cargar_datos_locales():
-    if os.path.exists(ARCHIVO_EXCEL):
-        try:
-            df_datos = pd.read_excel(ARCHIVO_EXCEL, sheet_name='DATOS', engine='openpyxl')
-            df_tiempos = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', engine='openpyxl')
+# =========================================================================
+# PROCESADOR DINÁMICO DE DATOS
+# =========================================================================
 
+def procesar_hoja_dinamica(file_path, sheet_name):
+    df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None, engine='openpyxl')
+    registros = []
+    circuito_actual = "Desconocido"
 
-            return df_datos, df_tiempos
-        except Exception as e:
-            st.error(f"Error al leer el archivo Excel: {e}")
-            return None, None
-    else:
-        st.warning(f"No se encontró el archivo '{ARCHIVO_EXCEL}' en la carpeta del proyecto.")
-        return None, None
+    for row_idx in range(len(df_raw)):
+        row_vals = df_raw.iloc[row_idx].dropna().tolist()
+        
+        # Detectar títulos de Circuitos
+        if len(row_vals) == 1 and isinstance(row_vals[0], str):
+            val = row_vals[0].strip()
+            if not val.isdigit() and "PILOTO" not in val.upper() and ":" not in val:
+                circuito_actual = val
+                continue
+        
+        # Detectar columnas de pilotos y tiempos
+        for col_idx in range(len(df_raw.columns) - 1):
+            val_header = str(df_raw.iloc[row_idx, col_idx]).strip()
+            
+            if val_header and val_header.lower() != 'nan' and not val_header.isdigit() and val_header.upper() != 'PILOTO':
+                for r in range(row_idx + 1, len(df_raw)):
+                    vuelta_num = df_raw.iloc[r, col_idx]
+                    tiempo_val = df_raw.iloc[r, col_idx + 1]
+                    
+                    if pd.notna(vuelta_num) and pd.notna(tiempo_val):
+                        if str(vuelta_num).strip().isdigit():
+                            registros.append({
+                                'Circuito': circuito_actual,
+                                'Piloto': val_header,
+                                'Vuelta': int(vuelta_num),
+                                'Tiempo': str(tiempo_val).strip()
+                            })
+                        else:
+                            break
+                    else:
+                        break
 
-df_datos, df_tiempos = cargar_datos_locales()
+    return pd.DataFrame(registros).drop_duplicates()
+
+# =========================================================================
+# CARGA Y PREPARACIÓN DE VARIABLES GLOBALES
+# =========================================================================
+
+opciones_fechas_combinadas = ["Campeonato Completo"]
+
+if os.path.exists(ARCHIVO_EXCEL):
+    try:
+        # Carga tradicional para pestañas que usan df_datos y df_tiempos original
+        xls = pd.ExcelFile(ARCHIVO_EXCEL, engine='openpyxl')
+        hojas = xls.sheet_names
+        
+        df_datos = pd.read_excel(ARCHIVO_EXCEL, sheet_name='DATOS', engine='openpyxl') if 'DATOS' in hojas else pd.DataFrame()
+        df_tiempos = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', engine='openpyxl') if 'Carga Tiempos' in hojas else pd.DataFrame()
+        
+        # Obtener lista de circuitos detectados para los desplegables
+        if 'Carga Tiempos' in hojas:
+            df_crudo_aux = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', header=None, engine='openpyxl')
+            columna_a_rellenada = df_crudo_aux.iloc[:, 0].ffill()
+            circuitos_detectados = []
+            for c in columna_a_rellenada.dropna().astype(str).str.strip():
+                c_upper = c.upper()
+                if c_upper not in [x.upper() for x in circuitos_detectados] and c != "" and "NAN" not in c_upper and not c_upper.startswith("FECHA"):
+                    circuitos_detectados.append(c)
+            
+            for idx, nombre_circuito in enumerate(circuitos_detectados):
+                opciones_fechas_combinadas.append(f"Fecha {idx + 1} - {nombre_circuito}")
+    except Exception as e:
+        df_datos = pd.DataFrame()
+        df_tiempos = pd.DataFrame()
+        opciones_fechas_combinadas = ["Campeonato Completo"] + [f"Fecha {i}" for i in range(1, 11)]
+else:
+    df_datos = pd.DataFrame()
+    df_tiempos = pd.DataFrame()
+    opciones_fechas_combinadas = ["Campeonato Completo"]
 
 # 2. MENÚ LATERAL
 st.sidebar.image("https://flaticon.com", width=80) 
@@ -126,7 +160,7 @@ st.sidebar.subheader("Campeonato Interno")
 
 opcion = st.sidebar.radio(
     "Navegación",
-    ["Resumen", "Comparativa de Tiempos", "Lastre", "Duelo H2H", "Simulador de Campeonato"]
+    ["Resumen", "Comparativa de Tiempos", "Lastre", "Duelo H2H", "Simulador de Campeonato", "Estadisticas"]
 )
 
 # Pilotos oficiales en tu orden exacto de columnas del Excel
@@ -1577,3 +1611,273 @@ elif opcion == "Simulador de Campeonato":
             """
             
         st.markdown(html_panel, unsafe_allow_html=True)
+
+elif opcion == "Estadisticas":
+    st.title("🏁 Live Timing Pro — Análisis de Ritmo")
+
+    # Función auxiliar para formatear segundos flotantes a MM:SS,mmm
+    def formatear_mm_ss_ms(segundos):
+        if segundos is None or pd.isna(segundos):
+            return "--:--"
+        minutos = int(segundos // 60)
+        seg_restantes = segundos % 60
+        seg = int(seg_restantes)
+        miliseg = int(round((seg_restantes - seg) * 1000))
+        return f"{minutos:02d}:{seg:02d},{miliseg:03d}"
+
+    # Función auxiliar para limpiar cadenas de tiempo provenientes de Excel
+    def limpiar_tiempo_str(tiempo_raw):
+        if not tiempo_raw or tiempo_raw == "--:--":
+            return "--:--"
+        seg = tiempo_a_segundos(tiempo_raw)
+        return formatear_mm_ss_ms(seg)
+
+    # Función interna para procesar la hoja e incluir el PROMEDIO de la hoja de Excel
+    def procesar_hoja_dinamica_multicolumnas(file_path, sheet_name):
+        df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None, engine='openpyxl')
+        registros = []
+        promedios_excel = {}
+
+        for r in range(len(df_raw)):
+            for c in range(len(df_raw.columns)):
+                val = str(df_raw.iloc[r, c]).strip()
+                
+                if val and val.lower() != 'nan' and not val.isdigit() and len(val) > 2:
+                    val_upper = val.upper()
+                    if not any(k in val_upper for k in ['PILOTO', 'PROMEDIO', 'MEJOR TIEMPO', 'CARRERA', '+', ':']):
+                        
+                        circuito_nombre = val_upper.replace(' C1', '').replace(' C2', '').strip()
+                        carrera_nombre = 'Carrera 1' if 'C1' in val_upper else ('Carrera 2' if 'C2' in val_upper else 'General')
+                        
+                        for r_sub in range(r + 1, min(r + 5, len(df_raw))):
+                            for c_sub in range(max(0, c - 2), min(len(df_raw.columns) - 1, c + 8)):
+                                header_piloto = str(df_raw.iloc[r_sub, c_sub]).strip()
+                                
+                                if header_piloto and header_piloto.lower() != 'nan' and header_piloto.upper() not in ['PILOTO', 'PROMEDIO', 'MEJOR TIEMPO']:
+                                    if not header_piloto.isdigit() and ':' not in header_piloto:
+                                        
+                                        # 1. Leer Vueltas
+                                        for r_data in range(r_sub + 1, len(df_raw)):
+                                            v_val = df_raw.iloc[r_data, c_sub]
+                                            t_val = df_raw.iloc[r_data, c_sub + 1]
+                                            
+                                            if pd.notna(v_val) and pd.notna(t_val):
+                                                v_str = str(v_val).strip()
+                                                if v_str.isdigit():
+                                                    registros.append({
+                                                        'Circuito': circuito_nombre,
+                                                        'Carrera': carrera_nombre,
+                                                        'Piloto': header_piloto,
+                                                        'Vuelta': int(v_str),
+                                                        'Tiempo': str(t_val).strip()
+                                                    })
+                                                else:
+                                                    break
+                                            else:
+                                                break
+
+                                        # 2. Buscar la celda de PROMEDIO escaneando las filas inferiores
+                                        for r_prom in range(r_sub + 1, min(r_sub + 35, len(df_raw))):
+                                            fila_valores = [str(df_raw.iloc[r_prom, col]).strip().upper() for col in range(max(0, c_sub - 3), c_sub + 1)]
+                                            if 'PROMEDIO' in fila_valores:
+                                                t_prom = df_raw.iloc[r_prom, c_sub + 1]
+                                                if pd.notna(t_prom):
+                                                    promedios_excel[(circuito_nombre, carrera_nombre, header_piloto)] = str(t_prom).strip()
+                                                break
+
+        return pd.DataFrame(registros).drop_duplicates(), promedios_excel
+
+    if os.path.exists(ARCHIVO_EXCEL):
+        try:
+            df_est, promedios_excel = procesar_hoja_dinamica_multicolumnas(ARCHIVO_EXCEL, "Diferencia en Carrera")
+
+            if not df_est.empty:
+                df_est['Tiempo_Seg'] = df_est['Tiempo'].apply(tiempo_a_segundos)
+                df_validos = df_est.dropna(subset=['Tiempo_Seg']).copy()
+
+                # --- 1. SELECCIÓN DE CIRCUITO ---
+                circuitos_est = sorted(list(df_validos['Circuito'].unique()))
+                circ_sel = st.selectbox("🏎️ Seleccionar Circuito:", circuitos_est)
+
+                df_circ = df_validos[df_validos['Circuito'] == circ_sel].sort_values('Vuelta')
+
+                # --- 2. FILTRO DE CARRERA ---
+                cargas_disponibles = sorted(list(df_circ['Carrera'].unique()))
+                
+                if len(cargas_disponibles) > 1:
+                    opciones_carrera = ["Todas las Carreras"] + cargas_disponibles
+                    carrera_sel = st.radio("🏁 Seleccionar Carrera:", opciones_carrera, horizontal=True)
+                    if carrera_sel != "Todas las Carreras":
+                        df_circ = df_circ[df_circ['Carrera'] == carrera_sel]
+
+                pilotos_disponibles = sorted(list(df_circ['Piloto'].unique()))
+                
+                # --- 3. SELECCIÓN DE PILOTOS ---
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("Comparativa Frente a Frente")
+                
+                p1 = st.sidebar.selectbox("Piloto 1:", pilotos_disponibles, index=0 if len(pilotos_disponibles) > 0 else 0)
+                p2_idx = 1 if len(pilotos_disponibles) > 1 else 0
+                p2 = st.sidebar.selectbox("Piloto 2:", pilotos_disponibles, index=p2_idx)
+
+                df_p1 = df_circ[df_circ['Piloto'] == p1]
+                df_p2 = df_circ[df_circ['Piloto'] == p2]
+
+                # --- CÁLCULO DE RÉCORD ---
+                rec_p1 = df_p1['Tiempo_Seg'].min() if not df_p1.empty else None
+                rec_p1_str = limpiar_tiempo_str(df_p1.loc[df_p1['Tiempo_Seg'].idxmin(), 'Tiempo']) if rec_p1 else "--:--"
+
+                rec_p2 = df_p2['Tiempo_Seg'].min() if not df_p2.empty else None
+                rec_p2_str = limpiar_tiempo_str(df_p2.loc[df_p2['Tiempo_Seg'].idxmin(), 'Tiempo']) if rec_p2 else "--:--"
+
+                # --- PROMEDIO DEL EXCEL ---
+                carrera_actual = df_circ['Carrera'].iloc[0] if 'carrera_sel' in locals() and carrera_sel != "Todas las Carreras" else 'Carrera 1'
+                
+                prom_p1_str_raw = promedios_excel.get((circ_sel, carrera_actual, p1))
+                prom_p2_str_raw = promedios_excel.get((circ_sel, carrera_actual, p2))
+
+                prom_p1 = tiempo_a_segundos(prom_p1_str_raw) if prom_p1_str_raw else (df_p1['Tiempo_Seg'].mean() if not df_p1.empty else None)
+                prom_p2 = tiempo_a_segundos(prom_p2_str_raw) if prom_p2_str_raw else (df_p2['Tiempo_Seg'].mean() if not df_p2.empty else None)
+
+                str_prom_p1 = formatear_mm_ss_ms(prom_p1)
+                str_prom_p2 = formatear_mm_ss_ms(prom_p2)
+
+                # --- CÁLCULO DE REGULARIDAD (Filtra vueltas > 5% del RÉCORD personal) ---
+                def filtrar_regularidad_piloto(df_piloto):
+                    if df_piloto.empty:
+                        return df_piloto
+                    record_personal = df_piloto['Tiempo_Seg'].min()
+                    return df_piloto[df_piloto['Tiempo_Seg'] <= record_personal * 1.05]
+
+                df_p1_reg = filtrar_regularidad_piloto(df_p1)
+                df_p2_reg = filtrar_regularidad_piloto(df_p2)
+
+                std_p1 = df_p1_reg['Tiempo_Seg'].std() if len(df_p1_reg) > 1 else None
+                std_p2 = df_p2_reg['Tiempo_Seg'].std() if len(df_p2_reg) > 1 else None
+
+                if std_p1 is not None and std_p2 is not None:
+                    if std_p1 < std_p2:
+                        txt_reg_p1 = f"±{std_p1:.3f}s (MÁS SÓLIDO)"
+                        txt_reg_p2 = f"±{std_p2:.3f}s"
+                    else:
+                        txt_reg_p1 = f"±{std_p1:.3f}s"
+                        txt_reg_p2 = f"±{std_p2:.3f}s (MÁS SÓLIDO)"
+                else:
+                    txt_reg_p1 = f"±{std_p1:.3f}s" if std_p1 is not None else "--"
+                    txt_reg_p2 = f"±{std_p2:.3f}s" if std_p2 is not None else "--"
+
+                # --- TARJETAS SUPERIORES ---
+                st.markdown("<br>", unsafe_allow_html=True)
+                c1, c2 = st.columns(2)
+                
+                with c1:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #161925 0%, #0d0f17 100%); padding: 18px; border-radius: 12px; border-top: 4px solid #00d2ff; box-shadow: 0 4px 12px rgba(0,0,0,0.5); margin-bottom: 12px; text-align: center;">
+                        <span style="color: #8f92a1; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">🏎️ PILOTO 1</span>
+                        <h2 style="color: #ffffff; font-size: 26px; font-weight: 800; margin: 4px 0 12px 0;">{p1}</h2>
+                        <p style="color: #e0e0e0; font-size: 15px; margin: 4px 0;">⏱️ <b style="color: #ffffff;">Récord:</b> <span style="color: #00d2ff; font-weight: 700;">{rec_p1_str}</span></p>
+                        <p style="color: #e0e0e0; font-size: 15px; margin: 4px 0;">📊 <b style="color: #ffffff;">Promedio (Excel):</b> <span style="color: #00d2ff; font-weight: 700;">{str_prom_p1}</span></p>
+                        <p style="color: #e0e0e0; font-size: 14px; margin: 4px 0;">🎯 <b style="color: #ffffff;">Regularidad:</b> <span style="color: #ff007f; font-weight: 700;">{txt_reg_p1}</span></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with c2:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #161925 0%, #0d0f17 100%); padding: 18px; border-radius: 12px; border-top: 4px solid #ff9900; box-shadow: 0 4px 12px rgba(0,0,0,0.5); margin-bottom: 12px; text-align: center;">
+                        <span style="color: #8f92a1; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">🏎️ PILOTO 2</span>
+                        <h2 style="color: #ffffff; font-size: 26px; font-weight: 800; margin: 4px 0 12px 0;">{p2}</h2>
+                        <p style="color: #e0e0e0; font-size: 15px; margin: 4px 0;">⏱️ <b style="color: #ffffff;">Récord:</b> <span style="color: #ff9900; font-weight: 700;">{rec_p2_str}</span></p>
+                        <p style="color: #e0e0e0; font-size: 15px; margin: 4px 0;">📊 <b style="color: #ffffff;">Promedio (Excel):</b> <span style="color: #ff9900; font-weight: 700;">{str_prom_p2}</span></p>
+                        <p style="color: #e0e0e0; font-size: 14px; margin: 4px 0;">🎯 <b style="color: #ffffff;">Regularidad:</b> <span style="color: #ff007f; font-weight: 700;">{txt_reg_p2}</span></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # --- DUELOS DIRECTOS ---
+                c3, c4 = st.columns(2)
+                
+                if rec_p1 and rec_p2:
+                    diff_rec = rec_p1 - rec_p2
+                    ganador_rec = p1 if diff_rec < 0 else p2
+                    rival_rec = p2 if diff_rec < 0 else p1
+                    val_rec_str = f"{ganador_rec.upper()} (-{abs(diff_rec):.3f}s vs {rival_rec.upper()})"
+                else:
+                    val_rec_str = "Datos insuficientes"
+
+                with c3:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #2a0845 0%, #16002c 100%); padding: 16px; border-radius: 12px; border: 1px solid #8e44ad; box-shadow: 0 4px 12px rgba(0,0,0,0.5); margin-bottom: 15px; text-align: center;">
+                        <span style="color: #d1a8ff; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">⚡ VUELTA RÁPIDA DE LA TANDA</span>
+                        <h3 style="color: #ffffff; font-size: 20px; font-weight: 800; margin: 6px 0 0 0;">🥇 {val_rec_str}</h3>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                if prom_p1 and prom_p2:
+                    diff_prom = prom_p1 - prom_p2
+                    ganador_prom = p1 if diff_prom < 0 else p2
+                    rival_prom = p2 if diff_prom < 0 else p1
+                    val_prom_str = f"{ganador_prom.upper()} (-{abs(diff_prom):.3f}s vs {rival_prom.upper()})"
+                else:
+                    val_prom_str = "Datos insuficientes"
+
+                with c4:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #0a2e38 0%, #04161c 100%); padding: 16px; border-radius: 12px; border: 1px solid #27ae60; box-shadow: 0 4px 12px rgba(0,0,0,0.5); margin-bottom: 15px; text-align: center;">
+                        <span style="color: #80e8ab; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">👑 LÍDER DE RITMO GLOBAL</span>
+                        <h3 style="color: #ffffff; font-size: 20px; font-weight: 800; margin: 6px 0 0 0;">🥇 {val_prom_str}</h3>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # --- GRÁFICO (FILTRA PACE CAR >15% RESPECTO AL PROMEDIO DEL MEJOR PILOTO) ---
+                st.markdown("---")
+                st.subheader("📈 Gráfico de Evolución de Ritmo (Sin Pace Car)")
+
+                promedio_mejor_piloto = df_circ.groupby('Piloto')['Tiempo_Seg'].mean().min()
+                umbral_corte_pc = promedio_mejor_piloto * 1.15
+                df_grafico = df_circ[df_circ['Tiempo_Seg'] <= umbral_corte_pc].copy()
+
+                df_grafico['Tiempo_Fecha'] = pd.to_datetime(df_grafico['Tiempo_Seg'], unit='s')
+                df_grafico['Tiempo_Formateado'] = df_grafico['Tiempo_Seg'].apply(formatear_mm_ss_ms)
+
+                fig_line = px.line(
+                    df_grafico,
+                    x='Vuelta',
+                    y='Tiempo_Fecha',
+                    color='Piloto',
+                    markers=True,
+                    labels={'Tiempo_Fecha': 'Tiempo de Vuelta', 'Vuelta': 'Número de Vuelta'},
+                    template="plotly_dark",
+                    hover_data={'Tiempo_Fecha': False, 'Tiempo_Formateado': True}
+                )
+
+                fig_line.update_layout(
+                    height=480,
+                    hovermode="x unified",
+                    xaxis=dict(showgrid=True, gridcolor="#2a2e3d", dtick=1),
+                    yaxis=dict(
+                        showgrid=True, 
+                        gridcolor="#2a2e3d", 
+                        tickformat='%M:%S,%3f'
+                    ),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+
+                st.plotly_chart(fig_line, use_container_width=True)
+
+                # --- TABLA COMPARATIVA ---
+                st.subheader("📋 Historial de Tiempos Vuelta a Vuelta")
+                df_tabla_base = df_circ[['Vuelta', 'Piloto', 'Tiempo_Seg']].drop_duplicates(subset=['Vuelta', 'Piloto']).copy()
+                df_tabla_base['Tiempo'] = df_tabla_base['Tiempo_Seg'].apply(formatear_mm_ss_ms)
+                
+                df_tabla = df_tabla_base.pivot(index='Vuelta', columns='Piloto', values='Tiempo').reset_index()
+                df_tabla.columns.name = None
+                df_tabla.insert(0, 'Posición', "Vuelta " + df_tabla['Vuelta'].astype(str))
+                
+                st.dataframe(df_tabla.drop(columns=['Vuelta']), use_container_width=True, hide_index=True)
+
+            else:
+                st.warning("No se detectaron datos en la pestaña 'Diferencia en Carrera'.")
+
+        except Exception as e:
+            st.error(f"Error al generar las estadísticas: {e}")
+    else:
+        st.error(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")
