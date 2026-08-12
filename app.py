@@ -178,6 +178,21 @@ if opcion == "Resumen":
 
     if os.path.exists(ARCHIVO_EXCEL):
         try:
+            # Función auxiliar interna para parsear tiempos de forma segura
+            def parse_tiempo_a_segundos(val):
+                if pd.isna(val):
+                    return None
+                try:
+                    if isinstance(val, (int, float)):
+                        return float(val)
+                    val_str = str(val).strip().replace(',', '.')
+                    if ":" in val_str:
+                        partes = val_str.split(":")
+                        return float(partes[0]) * 60 + float(partes[1])
+                    return float(val_str)
+                except:
+                    return None
+
             # 1. CARGA DE BASE DE DATOS Y FILTRADOS DE CONTROL
             df_puntos_graf = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Tabla Final', engine='openpyxl')
             df_puntos_graf.columns = [str(c).strip() for c in df_puntos_graf.columns]
@@ -214,6 +229,7 @@ if opcion == "Resumen":
 
             fecha_seleccionada = st.selectbox("Seleccionar Fecha o Histórico:", opciones_fechas_combinadas)
 
+            # --- FILTRADO DINÁMICO DE PUNTOS SEGÚN LA FECHA ELEGIDA ---
             if fecha_seleccionada == "Campeonato Completo":
                 df_filtrado_resumen = df_puntos_graf[["PILOTO", "PTS"]].sort_values(by="PTS", ascending=False).reset_index(drop=True)
                 df_filtrado_resumen.columns = ["Piloto", "Puntos"]
@@ -221,12 +237,15 @@ if opcion == "Resumen":
             else:
                 try:
                     import re
-                    numero_fecha_detectado = int(re.findall(r'\d+', str(fecha_seleccionada))) - 1
+                    # FIX: Extraemos el primer número encontrado ([0])
+                    coincidencias = re.findall(r'\d+', str(fecha_seleccionada))
+                    numero_fecha_detectado = int(coincidencias[0]) - 1 if coincidencias else 0
                 except:
                     numero_fecha_detectado = 0
                 
                 fila_total_bloque_hoja1 = filas_totales_fecha[numero_fecha_detectado] if numero_fecha_detectado < len(filas_totales_fecha) else filas_totales_fecha[-1]
                 tabla_puntos_fecha_individual = []
+                
                 for piloto_n, col_idx in indices_pilotos_graf.items():
                     val_puntos_celda = df_hoja1_graf.iloc[fila_total_bloque_hoja1, col_idx]
                     try:
@@ -234,43 +253,43 @@ if opcion == "Resumen":
                     except:
                         puntos_limpios_num = 0.0
                     tabla_puntos_fecha_individual.append({"Piloto": piloto_n, "Puntos": puntos_limpios_num})
+                
                 df_filtrado_resumen = pd.DataFrame(tabla_puntos_fecha_individual).sort_values(by="Puntos", ascending=False).reset_index(drop=True)
                 titulo_grafico = f"Puntos Netos - {fecha_seleccionada}"
 
-            # --- COLUMNAS PRINCIPALES (TABLA Y GRÁFICO) ---
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader(f"📋 Tabla de Posiciones ({fecha_seleccionada})")
-                st.dataframe(
-                    df_filtrado_resumen,
-                    column_config={
-                        "Piloto": st.column_config.TextColumn("Piloto 🏎️", width="medium"),
-                        "Puntos": st.column_config.ProgressColumn(
-                            "Puntos Generales",
-                            format="%.2f pts",
-                            min_value=0,
-                            max_value=int(df_filtrado_resumen["Puntos"].max() if len(df_filtrado_resumen) > 0 else 300)
-                        )
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
 
-            with col2:
-                st.subheader("📊 Gráfico de Rendimiento")
-                fig_barras = px.bar(
-                    df_filtrado_resumen, x="Piloto", y="Puntos", color="Piloto",
-                    template="plotly_dark", title=titulo_grafico,
+# --- GRÁFICO DE DONA CENTRADO ---
+            col_izq, col_centro, col_der = st.columns([1, 2, 1])
+
+            with col_centro:
+                st.subheader(f"🎯 Distribución de Puntos ({fecha_seleccionada})")
+                
+                fig_dona = px.pie(
+                    df_filtrado_resumen, 
+                    names="Piloto", 
+                    values="Puntos",
+                    hole=0.5, # Hace que sea dona en lugar de torta completa
+                    template="plotly_dark",
                     color_discrete_sequence=["#e10600", "#00b0ff", "#ff9100", "#00e676"]
                 )
-                fig_barras.update_layout(plot_bgcolor="#161925", paper_bgcolor="#0f111a", margin=dict(l=10, r=10, t=40, b=10), showlegend=False)
-                st.plotly_chart(fig_barras, use_container_width=True, key="resumen_rendimiento_fijo")
-
+                
+                fig_dona.update_traces(
+                    textinfo='label+value',
+                    textposition='outside',
+                    marker=dict(line=dict(color='#0f111a', width=2))
+                )
+                fig_dona.update_layout(
+                    plot_bgcolor="#161925", paper_bgcolor="#0f111a",
+                    margin=dict(l=20, r=20, t=30, b=20),
+                    height=380, showlegend=False
+                )
+                
+                st.plotly_chart(fig_dona, use_container_width=True, key="resumen_dona_fijo")
             # --- EVOLUCIÓN TEMPORAL LÍNEAS ---
             for idx, fila_total in enumerate(filas_totales_fecha[:ultima_fecha_con_datos]):
                 nombre_fecha_eje_x = f"Fecha {idx + 1}"
                 try:
-                    circuito_real = opciones_fechas_combinadas[idx + 1].split(" - ")
+                    circuito_real = opciones_fechas_combinadas[idx + 1].split(" - ")[1]
                 except:
                     circuito_real = f"Carrera {idx + 1}"
                 
@@ -278,7 +297,7 @@ if opcion == "Resumen":
                     val_puntos_fecha = df_hoja1_graf.iloc[fila_total, col_idx]
                     puntos_fecha_limpio = str(val_puntos_fecha).replace(',', '.', 1) if pd.notna(val_puntos_fecha) else "0.0"
                     try:
-                        puntos_fecha = float(puntos_fecha_limpio) if puntos_fecha_limpio.replace('.','',1).isdigit() else 0.0
+                        puntos_fecha = float(puntos_fecha_limpio)
                     except:
                         puntos_fecha = 0.0
                     
@@ -290,10 +309,14 @@ if opcion == "Resumen":
                     pos_c2 = "-"
                     if idx < len(filas_c1):
                         val_c1 = df_hoja1_graf.iloc[filas_c1[idx], col_idx]
-                        if pd.notna(val_c1): pos_c1 = f"P{int(float(str(val_c1).replace(',','.',1)))}"
+                        if pd.notna(val_c1): 
+                            try: pos_c1 = f"P{int(float(str(val_c1).replace(',','.',1)))}"
+                            except: pass
                     if idx < len(filas_c2):
                         val_c2 = df_hoja1_graf.iloc[filas_c2[idx], col_idx]
-                        if pd.notna(val_c2): pos_c2 = f"P{int(float(str(val_c2).replace(',','.',1)))}"
+                        if pd.notna(val_c2): 
+                            try: pos_c2 = f"P{int(float(str(val_c2).replace(',','.',1)))}"
+                            except: pass
                     
                     resultado_txt = f"{pos_c1} / {pos_c2}"
 
@@ -336,19 +359,20 @@ if opcion == "Resumen":
             poles_totales_por_piloto = {p: 0 for p in pilotos_torneo}
             efectividad_mangas_totales = {p: [] for p in pilotos_torneo}
 
-            # 🛠️ 1. CONTEO DE POLES DESDE TU HOJA1 (FOTO)
+            # 🛠️ 1. CONTEO DE POLES DESDE HOJA1
             for f_pole in filas_pole_hoja1:
                 for piloto, col_idx in indices_pilotos_graf.items():
                     columna_puntos_idx = col_idx + 1
-                    val_pole = df_hoja1_graf.iloc[f_pole, columna_puntos_idx]
-                    if pd.notna(val_pole) and str(val_pole).strip() != "":
-                                            try:
-                                                texto_pole = str(val_pole).strip().upper().replace(",0", "").replace(".0", "")
-                                                if texto_pole in ["1", "POLE", "1°", "🥇"]:
-                                                    poles_totales_por_piloto[piloto] += 1
-                                            except: pass
+                    if columna_puntos_idx < df_hoja1_graf.shape[1]:
+                        val_pole = df_hoja1_graf.iloc[f_pole, columna_puntos_idx]
+                        if pd.notna(val_pole) and str(val_pole).strip() != "":
+                            try:
+                                texto_pole = str(val_pole).strip().upper().replace(",0", "").replace(".0", "")
+                                if texto_pole in ["1", "POLE", "1°", "🥇"]:
+                                    poles_totales_por_piloto[piloto] += 1
+                            except: pass
 
-            # 🛠️ 2. MOTOR HÍBRIDO AVANZADO (LARGADA DE TIEMPOS VS LLEGADA ESTRICTA DE HOJA1)
+            # 🛠️ 2. MOTOR HÍBRIDO AVANZADO
             try:
                 df_tiempos_aux_resumen = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', header=None, engine='openpyxl')
                 df_tiempos_aux_resumen.iloc[:, 0] = df_tiempos_aux_resumen.iloc[:, 0].ffill()
@@ -361,10 +385,11 @@ if opcion == "Resumen":
                     if idx_est < len(filas_pole_hoja1):
                         f_pole_actual = filas_pole_hoja1[idx_est]
                         for piloto, col_idx in indices_pilotos_graf.items():
-                            val_p_celda = df_hoja1_graf.iloc[f_pole_actual, col_idx + 1]
-                            if pd.notna(val_p_celda) and str(val_p_celda).strip() in ["1", "1.0"]:
-                                poleman_fecha = piloto
-                                break
+                            if col_idx + 1 < df_hoja1_graf.shape[1]:
+                                val_p_celda = df_hoja1_graf.iloc[f_pole_actual, col_idx + 1]
+                                if pd.notna(val_p_celda) and str(val_p_celda).strip() in ["1", "1.0"]:
+                                    poleman_fecha = piloto
+                                    break
 
                     grilla_c1_largada = {p: 4.0 for p in pilotos_torneo}
                     
@@ -372,7 +397,7 @@ if opcion == "Resumen":
                         f_qualy = filas_clasif_tiempos[idx_est]
                         tiempos_fecha = {}
                         for p, col_idx in indices_pilotos_fechas_resumen.items():
-                            seg = tiempo_a_segundos(df_tiempos_aux_resumen.iloc[f_qualy, col_idx])
+                            seg = parse_tiempo_a_segundos(df_tiempos_aux_resumen.iloc[f_qualy, col_idx])
                             if seg is not None and seg > 30.0 and p != poleman_fecha:
                                 tiempos_fecha[p] = seg
                         
@@ -426,7 +451,8 @@ if opcion == "Resumen":
                                 except: pass
             except Exception as e_proc:
                 st.warning(f"Aviso en cálculo de grillas: {e_proc}")
-                            # --- COMPILACIÓN DEL REPORTE FINAL ---
+
+            # --- COMPILACIÓN DEL REPORTE FINAL ---
             reporte_tarjetas = []
             for piloto in pilotos_torneo:
                 lista_c1 = posiciones_c1_por_piloto.get(piloto, [])
@@ -454,7 +480,7 @@ if opcion == "Resumen":
 
             df_reporte_tarjetas = pd.DataFrame(reporte_tarjetas).sort_values(by="Promedio General")
 
-            # --- RENDERIZADO DE LAS TARJETAS (ESTILO LASTRE - FOTO 2) ---
+            # --- RENDERIZADO DE LAS TARJETAS (ESTILO LASTRE) ---
             st.markdown("""
             <style>
             .tarjeta-simulacion-f1 {
@@ -526,7 +552,7 @@ if opcion == "Resumen":
             max_poles = poles_totales_por_piloto[rey_pole]
             if max_poles > 0:
                 st.success(f"⏱️ **Rey de los Sábados:** El piloto con más Pole Positions es **{rey_pole}** con un total de **{max_poles} Poles**.")
-                st.caption("ℹ️ **Nota sobre la Efectividad de Carrera:** Este porcentaje se calcula dividiendo los puntos totales que sumó el piloto en la fecha sobre el máximo de puntos teóricos posibles a obtener en esa carrera (Pole Position + Victoria + Vuelta Rápida).")
+                st.caption("ℹ️ **Nota sobre la Efectividad de Carrera:** Este porcentaje mide el aprovechamiento de posiciones ganadas desde la posición inicial de largada en cada manga.")
 
         except Exception as e:
             st.error(f"Error general en la pestaña Resumen: {e}")
@@ -721,7 +747,7 @@ elif opcion == "Comparativa de Tiempos":
 
 elif opcion == "Lastre":
     st.title("⚖️ Sistema de Lastre Técnico")
-    st.write("Consulta el peso acumulado en pista y el rendimiento de los pilotos con lastre.")
+    st.write("Consulta el peso acumulado en pista.")
 
     if os.path.exists(ARCHIVO_EXCEL):
         try:
@@ -748,9 +774,6 @@ elif opcion == "Lastre":
             filas_lastre_fecha_real = columna_f_sim[columna_f_sim.str.contains("LASTRE FECHA|LASTRE.*FECHA", na=False)].index.tolist()
             filas_lastre_acum_real = columna_f_sim[columna_f_sim.str.contains("LASTRE ACUMULADO|LASTRE.*ACUM", na=False)].index.tolist()
 
-            # -----------------------------------------------------------------
-            # 📋 ACÁ ABAJO CONTINÚA TU LÓGICA ORIGINAL DE LAS TARJETAS DE KILOS
-            # -----------------------------------------------------------------
             if len(filas_lastre_fecha_real) > 0:
                 total_fechas_detectadas = len(filas_lastre_fecha_real)
                 opciones_lastre_dinamicas = [opt for opt in opciones_fechas_combinadas if opt != "Campeonato Completo"][:total_fechas_detectadas]
@@ -760,7 +783,6 @@ elif opcion == "Lastre":
                 numeros_encontrados = re.findall(r'\d+', str(fecha_sel))
                 idx_fecha_sel = int(numeros_encontrados[0]) - 1 if numeros_encontrados else 0
 
-                
                 # Armamos la tabla para renderizar los kilos en pista actuales
                 tabla_lastre = []
                 fila_pista = filas_lastre_acum_real[idx_fecha_sel] if idx_fecha_sel < len(filas_lastre_acum_real) else None
@@ -783,94 +805,13 @@ elif opcion == "Lastre":
                 for i, row in enumerate(df_lastre_render.iterrows()):
                     with cols_cards[i % 4]:
                         st.metric(label=f"Auto de {row[1]['Piloto']}", value=f"{row[1]['Lastre en Pista (kg)']} Kg", delta=f"+{row[1]['Lastre Generado (kg)']} Kg ganados")
-                
-             
             else:
                 st.warning("No se detectaron las filas de 'Lastre Fecha' en la 'Hoja1'.")
-
-            # =========================================================================
-            # 🏋️ MAPA VISUAL DE EFECTIVIDAD POR PESO (ESTILO F1 TV - SIN TABLAS)
-            # =========================================================================
-            st.markdown("---")
-            st.subheader("🏋️ Análisis de Rendimiento con Lastre Técnico")
-            st.write("Evaluación histórica del promedio de puntos sumados en relacion a los Kg cargados:")
-
-            rangos_peso = ["0-20 Kg", "21-40 Kg", "41-60 Kg", "61-80 Kg+"]
-            historial_peso_puntos = {p: {r: [] for r in rangos_peso} for p in pilotos_torneo}
-
-            for idx_c, fila_total in enumerate(filas_lastre_fecha_real[:ultima_fecha_real_num]):
-                for piloto, col_idx in indices_pilotos_hoja1.items():
-                    val_puntos = df_hoja1_sim.iloc[fila_total, col_idx]
-                    puntos_limpios = str(val_puntos).replace(',', '.', 1) if pd.notna(val_puntos) else "0.0"
-                    pts_fecha = float(puntos_limpios) if puntos_limpios.replace('.','',1).isdigit() else 0.0
-                    
-                    kilos_largada = 0.0
-                    if idx_c > 0:
-                        idx_bloque_anterior = idx_c - 1
-                        if idx_bloque_anterior < len(filas_lastre_acum_real):
-                            fila_lastre_anterior = filas_lastre_acum_real[idx_bloque_anterior]
-                            val_lastre = df_hoja1_sim.iloc[fila_lastre_anterior, col_idx]
-                            if pd.notna(val_lastre):
-                                kilos_largada = float(str(val_lastre).upper().replace("KG","").strip())
-
-                    if kilos_largada <= 20.0: rango_elegido = "0-20 Kg"
-                    elif kilos_largada <= 40.0: rango_elegido = "21-40 Kg"
-                    elif kilos_largada <= 60.0: rango_elegido = "41-60 Kg"
-                    else: rango_elegido = "61-80 Kg+"
-                        
-                    historial_peso_puntos[piloto][rango_elegido].append(pts_fecha)
-
-            estilos_mapa_peso = """
-            <style>
-            .contenedor-peso { background-color: #1a1c23; border-top: 4px solid #ff1801; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 2px 2px 10px rgba(0,0,0,0.4); }
-            .titulo-peso { color: #ff1801; font-size: 16px; font-weight: bold; text-align: center; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
-            .fila-piloto-peso { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #2d313f; }
-            .fila-piloto-peso:last-child { border-bottom: none; }
-            .nombre-piloto-peso { color: #ffffff; font-weight: 500; font-size: 14px; }
-            .datos-piloto-peso { text-align: right; }
-            .pts-peso { color: #ffffff; font-weight: bold; font-size: 15px; font-family: 'monospace'; }
-            .carreras-peso { color: #8a8d9a; font-size: 11px; display: block; }
-            </style>
-            """
-            st.markdown(estilos_mapa_peso, unsafe_allow_html=True)
-            columnas_rangos = st.columns(4)
-
-            for idx_rango, rango in enumerate(rangos_peso):
-                with columnas_rangos[idx_rango]:
-                    html_bloque = '<div class="contenedor-peso">'
-                    html_bloque += '<div class="titulo-peso">📦 ' + str(rango) + '</div>'
-                    
-                    tabla_pilotos_rango = []
-                    for piloto in pilotos_torneo:
-                        lista_puntos = historial_peso_puntos[piloto][rango]
-                        cant_fechas = len(lista_puntos)
-                        if cant_fechas > 0:
-                            promedio = sum(lista_puntos) / cant_fechas
-                            txt_fechas = f"en {cant_fechas} GP" if cant_fechas > 1 else "en 1 GP"
-                            tabla_pilotos_rango.append({"nombre": piloto, "promedio": promedio, "txt_pts": f"{promedio:.1f} pts", "txt_fechas": txt_fechas})
-                        else:
-                            tabla_pilotos_rango.append({"nombre": piloto, "promedio": -1.0, "txt_pts": "-", "txt_fechas": "0 GP"})
-                    
-                    tabla_pilotos_rango = sorted(tabla_pilotos_rango, key=lambda x: x["promedio"], reverse=True)
-                    for p_data in tabla_pilotos_rango:
-                        html_bloque += '<div class="fila-piloto-peso">'
-                        html_bloque += '    <span class="nombre-piloto-peso">🏎️ ' + str(p_data["nombre"]) + '</span>'
-                        html_bloque += '    <div class="datos-piloto-peso">'
-                        html_bloque += '        <span class="pts-peso">' + str(p_data["txt_pts"]) + '</span>'
-                        html_bloque += '        <span class="carreras-peso">' + str(p_data["txt_fechas"]) + '</span>'
-                        html_bloque += '    </div>'
-                        html_bloque += '</div>'
-                    
-                    html_bloque += '</div>'
-                    st.markdown(html_bloque, unsafe_allow_html=True)
-
-            st.info("💡 **Análisis de Telemetría:** Las tarjetas ordenan automáticamente a los pilotos de mayor a menor efectividad dentro de cada rango de plomo.")
 
         except Exception as e:
             st.error(f"Error al calcular el lastre desde el Excel: {e}")
     else:
         st.warning(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")
-
 elif opcion == "Posiciones":
     if os.path.exists(ARCHIVO_EXCEL):
         # 1. CARGA DIRECTA Y FRESCA DE LA HOJA1 EN CADA MOVIMIENTO DEL SELECTOR
@@ -934,188 +875,6 @@ elif opcion == "Posiciones":
     else:
         st.warning(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")
 
-elif opcion == "Estadísticas":
-    st.title("📊 Salón de la Fama e Historial Estadístico")
-    st.write("Análisis gráfico acumulado del desempeño de todos los pilotos en el torneo.")
-
-    if df_tiempos is not None:
-        try:
-            # 1. LECTURA DE DATOS PARA POLES Y VUELTAS RÁPIDAS
-            df_tiempos_crudo = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', header=None, engine='openpyxl')
-            df_tiempos_crudo.iloc[:, 0] = df_tiempos_crudo.iloc[:, 0].ffill()
-            columna_sesiones = df_tiempos_crudo.iloc[:, 1].astype(str).str.strip().str.upper()
-            indices_pilotos_fechas = {"Agus": 2, "Pablo": 3, "Juandi": 4, "Eze": 5}
-            
-            # Conteo de Poles
-            filas_clasif = df_tiempos_crudo[columna_sesiones.str.contains("CLASIF", na=False)]
-            conteo_poles = {p: 0 for p in pilotos}
-            for _, fila in filas_clasif.iterrows():
-                tiempos_fila = {}
-                for p, col_idx in indices_pilotos_fechas.items():
-                    seg = tiempo_a_segundos(fila[col_idx])
-                    if seg is not None and seg > 30.0: tiempos_fila[p] = seg
-                if tiempos_fila:
-                    conteo_poles[min(tiempos_fila, key=tiempos_fila.get)] += 1
-            df_poles = pd.DataFrame(list(conteo_poles.items()), columns=["Piloto", "Poles Metidas"])
-            
-            # Conteo de Vueltas Rápidas
-            filas_carreras = df_tiempos_crudo[columna_sesiones.str.contains("CARRERA", na=False)]
-            conteo_victorias = {p: 0 for p in pilotos}
-            for _, fila in filas_carreras.iterrows():
-                tiempos_fila = {}
-                for p, col_idx in indices_pilotos_fechas.items():
-                    seg = tiempo_a_segundos(fila[col_idx])
-                    if seg is not None and seg > 30.0: tiempos_fila[p] = seg
-                if tiempos_fila:
-                    conteo_victorias[min(tiempos_fila, key=tiempos_fila.get)] += 1
-            df_vics = pd.DataFrame(list(conteo_victorias.items()), columns=["Piloto", "Sesiones Lideradas"])
-            # 2. MOTOR DE RITMO HISTÓRICO (PROCESAMIENTO INDEPENDIENTE DE CARRERA 1 Y 2)
-            ritmo_acumulado = {p: [] for p in pilotos}
-            
-            if os.path.exists(ARCHIVO_EXCEL):
-                df_ritmo_crudo = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Diferencia en Carrera', header=None, engine='openpyxl')
-                
-                # Columnas reales basadas en tus fotos: Carrera 1 (B=1, D=3, F=5, H=7) y Carrera 2 (L=11, N=13, P=15, R=17)
-                columnas_c1 = {"Pablo": 1, "Eze": 3, "Agus": 5, "Juandi": 7}   
-                columnas_c2 = {"Pablo": 11, "Eze": 13, "Agus": 15, "Juandi": 17} 
-                
-                filas_totales_hoja, columnas_totales_hoja = df_ritmo_crudo.shape
-                
-                # Recorremos el Excel haciendo saltos de 24 en 24 filas hacia abajo para las 10 fechas
-                for fecha_idx in range(10):
-                    fila_base_bloque = fecha_idx * 24
-                    fila_ritmo_celda = fila_base_bloque + 22 # Fila 23 física de Excel (Índice 22 de Python)
-                    
-                    if fila_ritmo_celda < filas_totales_hoja:
-                        
-                        # --- PROCESAMOS ÚNICAMENTE CARRERA 1 ---
-                        lider_c1 = None
-                        t_lider_c1 = None
-                        
-                        for p, col in columnas_c1.items():
-                            if col < columnas_totales_hoja:
-                                celda = df_ritmo_crudo.iloc[fila_ritmo_celda, col]
-                                texto = str(celda).strip().replace(" ", "")
-                                if ":" in texto and "+" not in texto:
-                                    seg = tiempo_a_segundos(celda)
-                                    if seg is not None and seg > 30.0:
-                                        lider_c1 = p
-                                        t_lider_c1 = seg
-                                        break
-                        
-                        if t_lider_c1 is not None:
-                            for p, col in columnas_c1.items():
-                                if col < columnas_totales_hoja:
-                                    celda = df_ritmo_crudo.iloc[fila_ritmo_celda, col]
-                                    texto = str(celda).strip().replace(" ", "")
-                                    if p == lider_c1:
-                                        ritmo_acumulado[p].append(t_lider_c1)
-                                    elif "+" in texto:
-                                        try:
-                                            brecha = float(texto.replace("+", "").replace(",", "."))
-                                            ritmo_acumulado[p].append(t_lider_c1 + brecha)
-                                        except: pass
-
-                        # --- PROCESAMOS ÚNICAMENTE CARRERA 2 (LA QUE TIENE LOS DATOS ACTUALES) ---
-                        lider_c2 = None
-                        t_lider_c2 = None
-                        
-                        for p, col in columnas_c2.items():
-                            if col < columnas_totales_hoja:
-                                celda = df_ritmo_crudo.iloc[fila_ritmo_celda, col]
-                                texto = str(celda).strip().replace(" ", "")
-                                if ":" in texto and "+" not in texto:
-                                    seg = tiempo_a_segundos(celda)
-                                    if seg is not None and seg > 30.0:
-                                        lider_c2 = p
-                                        t_lider_c2 = seg
-                                        break
-                        
-                        if t_lider_c2 is not None:
-                            for p, col in columnas_c2.items():
-                                if col < columnas_totales_hoja:
-                                    celda = df_ritmo_crudo.iloc[fila_ritmo_celda, col]
-                                    texto = str(celda).strip().replace(" ", "")
-                                    if p == lider_c2:
-                                        ritmo_acumulado[p].append(t_lider_c2)
-                                    elif "+" in texto:
-                                        try:
-                                            brecha = float(texto.replace("+", "").replace(",", "."))
-                                            ritmo_acumulado[p].append(t_lider_c2 + brecha)
-                                        except: pass
-
-            # Filtramos los promedios de los pilotos que SÍ tienen datos registrados
-            promedios_netos = {}
-            for p in pilotos:
-                if ritmo_acumulado[p]:
-                    promedios_netos[p] = sum(ritmo_acumulado[p]) / len(ritmo_acumulado[p])
-            
-            # CALCULAMOS LAS BRECHAS HISTÓRICAS GENERALES CON RESPECTO AL MÁS RÁPIDO
-            tabla_ritmo_brechas = []
-            if promedios_netos:
-                piloto_mas_rapido_campeonato = min(promedios_netos, key=promedios_netos.get)
-                tiempo_base_campeonato = promedios_netos[piloto_mas_rapido_campeonato]
-                
-                for p in pilotos:
-                    if p in promedios_netos:
-                        brecha_global = promedios_netos[p] - tiempo_base_campeonato
-                        formato_texto = "Líder (0,000s)" if brecha_global == 0 else f"+{brecha_global:.3f}s".replace(".", ",")
-                        
-                        tabla_ritmo_brechas.append({
-                            "Piloto": p,
-                            "Brecha Promedio (seg)": brecha_global,
-                            "Texto Visual": formato_texto
-                        })
-            
-            df_ritmo_final = pd.DataFrame(tabla_ritmo_brechas)
-            if not df_ritmo_final.empty:
-                df_ritmo_final = df_ritmo_final.sort_values(by="Brecha Promedio (seg)", ascending=True)
-
-
-            # 3. RENDERIZADO GRÁFICO EN PANTALLA
-            izq, der = st.columns(2)
-            with izq:
-                st.subheader("🏎️ Récord de Pole Positions (Sábados)")
-                fig_poles = px.pie(df_poles, values="Poles Metidas", names="Piloto", hole=0.4,
-                                   color="Piloto", color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
-                fig_poles.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_poles, use_container_width=True, key="grafico_poles_historico")
-                
-            with der:
-                st.subheader("🏁 Dueños de la Vuelta Rápida (Domingos)")
-                st.write("Cada fecha otorga 2 récords de vuelta (Carrera 1 y 2). Conteo histórico:")
-                fig_vics = px.bar(df_vics, x="Piloto", y="Sesiones Lideradas", color="Piloto",
-                                  color_discrete_sequence=["#e10600", "#1f77b4", "#ff7f0e", "#2ca02c"])
-                fig_vics.update_traces(texttemplate='<b>%{y} VR</b>', textposition='outside', textfont_size=14)
-                fig_vics.update_layout(
-                    template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    yaxis_title="Cantidad de Vueltas Rápidas", xaxis_title="Pilotos del Torneo",
-                                        yaxis=dict(range=[0, max(df_vics["Sesiones Lideradas"]) + 2 if not df_vics.empty else 5])
-                )
-                st.plotly_chart(fig_vics, use_container_width=True, key="grafico_victorias_ritmo")
-            
-            # FILA INFERIOR: GRÁFICO DE RITMO HISTÓRICO POR BRECHAS
-            st.markdown("---")
-            st.subheader("⏱️ Brecha de Ritmo Total en Carrera (Histórico Acumulado)")
-            st.write("Muestra cuántos segundos por vuelta pierde cada piloto en promedio con respecto al líder de ritmo del campeonato.")
-            
-            if not df_ritmo_final.empty:
-                fig_ritmo = px.bar(df_ritmo_final, x="Brecha Promedio (seg)", y="Piloto", color="Piloto",
-                                    orientation='h', text="Texto Visual",
-                                    color_discrete_sequence=["#2ca02c", "#e10600", "#1f77b4", "#ff7f0e"])
-                fig_ritmo.update_traces(textposition='inside', textfont_size=14, textfont_color="white")
-                fig_ritmo.update_layout(
-                    template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    xaxis_title="Brecha Promedio por Vuelta (Segundos)", yaxis_title="Pilotos",
-                    showlegend=False
-                )
-                st.plotly_chart(fig_ritmo, use_container_width=True, key="grafico_ritmo_total_carrera")
-            else:
-                st.info("Aún no hay datos de ritmo cargados en la pestaña 'Diferencia en Carrera' para procesar.")
-        except Exception as e:
-            st.error(f"Error al procesar el historial estadístico: {e}")
-    else:
-        st.warning(f"No se encontró la pestaña de tiempos para procesar.")
 
 elif opcion == "Duelo H2H":
     st.title("⚔️ Duelo Head-to-Head (H2H)")
@@ -1612,11 +1371,70 @@ elif opcion == "Simulador de Campeonato":
             
         st.markdown(html_panel, unsafe_allow_html=True)
 
+elif opcion == "Lastre":
+    st.title("⚖️ Sistema de Lastre Técnico")
+    st.write("Consulta el peso acumulado en pista y el rendimiento de los pilotos con lastre.")
+
+    if os.path.exists(ARCHIVO_EXCEL):
+        try:
+            # 1. LEER LAS PLANILLAS DE FORMA SEGURA
+            df_hoja1_sim = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
+            columna_f_sim = df_hoja1_sim.iloc[:, 5].astype(str).str.strip().str.upper()
+
+            # Mapeo de columnas oficiales de pilotos en tu Hoja1
+            indices_pilotos_hoja1 = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
+            pilotos_torneo = list(indices_pilotos_hoja1.keys())
+
+            filas_lastre_fecha_real = columna_f_sim[columna_f_sim.str.contains("LASTRE FECHA|LASTRE.*FECHA", na=False)].index.tolist()
+            filas_lastre_acum_real = columna_f_sim[columna_f_sim.str.contains("LASTRE ACUMULADO|LASTRE.*ACUM", na=False)].index.tolist()
+
+            if len(filas_lastre_fecha_real) > 0:
+                total_fechas_detectadas = len(filas_lastre_fecha_real)
+                opciones_lastre_dinamicas = [f"Fecha {i+1}" for i in range(total_fechas_detectadas)]
+                fecha_sel = st.selectbox("Seleccionar Fecha para Consultar Lastre Técnico:", opciones_lastre_dinamicas)
+                
+                import re
+                numeros_encontrados = re.findall(r'\d+', str(fecha_sel))
+                idx_fecha_sel = int(numeros_encontrados[0]) - 1 if numeros_encontrados else 0
+
+                # Armamos la tabla para renderizar los kilos en pista actuales
+                tabla_lastre = []
+                fila_pista = filas_lastre_acum_real[idx_fecha_sel] if idx_fecha_sel < len(filas_lastre_acum_real) else None
+                fila_generado = filas_lastre_fecha_real[idx_fecha_sel] if idx_fecha_sel < len(filas_lastre_fecha_real) else None
+                
+                for p in pilotos_torneo:
+                    col_idx = indices_pilotos_hoja1[p]
+                    k_pista = df_hoja1_sim.iloc[fila_pista, col_idx] if fila_pista is not None else 0
+                    k_gen = df_hoja1_sim.iloc[fila_generado, col_idx] if fila_generado is not None else 0
+                    tabla_lastre.append({
+                        "Piloto": p,
+                        "Lastre en Pista (kg)": float(str(k_pista).upper().replace("KG","").strip()) if pd.notna(k_pista) else 0.0,
+                        "Lastre Generado (kg)": float(str(k_gen).upper().replace("KG","").strip()) if pd.notna(k_gen) else 0.0
+                    })
+                
+                df_lastre_render = pd.DataFrame(tabla_lastre)
+                
+                # Dibujamos las tarjetas individuales arriba
+                cols_cards = st.columns(len(pilotos_torneo))
+                for i, row in enumerate(df_lastre_render.iterrows()):
+                    with cols_cards[i % 4]:
+                        st.metric(label=f"Auto de {row[1]['Piloto']}", value=f"{row[1]['Lastre en Pista (kg)']} Kg", delta=f"+{row[1]['Lastre Generado (kg)']} Kg ganados")
+            else:
+                st.warning("No se detectaron las filas de 'Lastre Fecha' en la 'Hoja1'.")
+
+        except Exception as e:
+            st.error(f"Error al calcular el lastre desde el Excel: {e}")
+    else:
+        st.warning(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")       
+
 elif opcion == "Estadisticas":
     st.title("🏁 Live Timing Pro — Análisis de Ritmo")
 
-    # Función auxiliar para formatear segundos flotantes a MM:SS,mmm
+    # =========================================================================
+    # FUNCIONES AUXILIARES DE FORMATO Y PROCESAMIENTO DE TIEMPOS
+    # =========================================================================
     def formatear_mm_ss_ms(segundos):
+        """Formatea segundos flotantes a string MM:SS,mmm"""
         if segundos is None or pd.isna(segundos):
             return "--:--"
         minutos = int(segundos // 60)
@@ -1625,15 +1443,15 @@ elif opcion == "Estadisticas":
         miliseg = int(round((seg_restantes - seg) * 1000))
         return f"{minutos:02d}:{seg:02d},{miliseg:03d}"
 
-    # Función auxiliar para limpiar cadenas de tiempo provenientes de Excel
     def limpiar_tiempo_str(tiempo_raw):
+        """Limpia y valida cadenas de tiempo raw de Excel"""
         if not tiempo_raw or tiempo_raw == "--:--":
             return "--:--"
         seg = tiempo_a_segundos(tiempo_raw)
         return formatear_mm_ss_ms(seg)
 
-    # Función interna para procesar la hoja e incluir el PROMEDIO de la hoja de Excel
     def procesar_hoja_dinamica_multicolumnas(file_path, sheet_name):
+        """Extrae vueltas y promedios desde la hoja 'Diferencia en Carrera'"""
         df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None, engine='openpyxl')
         registros = []
         promedios_excel = {}
@@ -1641,26 +1459,21 @@ elif opcion == "Estadisticas":
         for r in range(len(df_raw)):
             for c in range(len(df_raw.columns)):
                 val = str(df_raw.iloc[r, c]).strip()
-                
                 if val and val.lower() != 'nan' and not val.isdigit() and len(val) > 2:
                     val_upper = val.upper()
                     if not any(k in val_upper for k in ['PILOTO', 'PROMEDIO', 'MEJOR TIEMPO', 'CARRERA', '+', ':']):
-                        
                         circuito_nombre = val_upper.replace(' C1', '').replace(' C2', '').strip()
                         carrera_nombre = 'Carrera 1' if 'C1' in val_upper else ('Carrera 2' if 'C2' in val_upper else 'General')
                         
                         for r_sub in range(r + 1, min(r + 5, len(df_raw))):
                             for c_sub in range(max(0, c - 2), min(len(df_raw.columns) - 1, c + 8)):
                                 header_piloto = str(df_raw.iloc[r_sub, c_sub]).strip()
-                                
                                 if header_piloto and header_piloto.lower() != 'nan' and header_piloto.upper() not in ['PILOTO', 'PROMEDIO', 'MEJOR TIEMPO']:
                                     if not header_piloto.isdigit() and ':' not in header_piloto:
-                                        
-                                        # 1. Leer Vueltas
+                                        # Extracción de tiempos vuelta a vuelta
                                         for r_data in range(r_sub + 1, len(df_raw)):
                                             v_val = df_raw.iloc[r_data, c_sub]
                                             t_val = df_raw.iloc[r_data, c_sub + 1]
-                                            
                                             if pd.notna(v_val) and pd.notna(t_val):
                                                 v_str = str(v_val).strip()
                                                 if v_str.isdigit():
@@ -1676,17 +1489,44 @@ elif opcion == "Estadisticas":
                                             else:
                                                 break
 
-                                        # 2. Buscar la celda de PROMEDIO escaneando las filas inferiores
-                                        for r_prom in range(r_sub + 1, min(r_sub + 35, len(df_raw))):
+                                        # Extracción de promedios fijados en el Excel
+                                        for r_prom in range(r_sub + 1, len(df_raw)):
                                             fila_valores = [str(df_raw.iloc[r_prom, col]).strip().upper() for col in range(max(0, c_sub - 3), c_sub + 1)]
                                             if 'PROMEDIO' in fila_valores:
                                                 t_prom = df_raw.iloc[r_prom, c_sub + 1]
                                                 if pd.notna(t_prom):
                                                     promedios_excel[(circuito_nombre, carrera_nombre, header_piloto)] = str(t_prom).strip()
                                                 break
-
         return pd.DataFrame(registros).drop_duplicates(), promedios_excel
 
+    def filtrar_grafico_inteligente(df_circuito):
+        """Filtra anomalías generales y vueltas con Pace Car (>=50% de coches lentos)"""
+        if df_circuito.empty:
+            return df_circuito
+
+        ritmos_base = df_circuito.groupby('Piloto')['Tiempo_Seg'].apply(
+            lambda x: x.nsmallest(5).median() if len(x) >= 3 else x.median()
+        ).to_dict()
+
+        df_temp = df_circuito.copy()
+        df_temp['Ritmo_Base'] = df_temp['Piloto'].map(ritmos_base)
+        df_temp['Es_Anomalia'] = df_temp['Tiempo_Seg'] > (df_temp['Ritmo_Base'] + 7.0)
+
+        anomalias_por_vuelta = df_temp.groupby('Vuelta')['Es_Anomalia'].agg(
+            total_pilotos='count',
+            pilotos_anomalos='sum'
+        ).reset_index()
+
+        anomalias_por_vuelta['Es_Pace_Car'] = (
+            (anomalias_por_vuelta['pilotos_anomalos'] / anomalias_por_vuelta['total_pilotos']) >= 0.5
+        ) & (anomalias_por_vuelta['pilotos_anomalos'] > 0)
+
+        vueltas_pace_car = set(anomalias_por_vuelta[anomalias_por_vuelta['Es_Pace_Car']]['Vuelta'])
+        return df_circuito[~df_circuito['Vuelta'].isin(vueltas_pace_car)].copy()
+
+    # =========================================================================
+    # EJECUCIÓN PRINCIPAL Y CÁLCULO DE TELEMETRÍA
+    # =========================================================================
     if os.path.exists(ARCHIVO_EXCEL):
         try:
             df_est, promedios_excel = procesar_hoja_dinamica_multicolumnas(ARCHIVO_EXCEL, "Diferencia en Carrera")
@@ -1695,15 +1535,14 @@ elif opcion == "Estadisticas":
                 df_est['Tiempo_Seg'] = df_est['Tiempo'].apply(tiempo_a_segundos)
                 df_validos = df_est.dropna(subset=['Tiempo_Seg']).copy()
 
-                # --- 1. SELECCIÓN DE CIRCUITO ---
+                # 1. SELECCIÓN DE CIRCUITO Y CARRERA
                 circuitos_est = sorted(list(df_validos['Circuito'].unique()))
                 circ_sel = st.selectbox("🏎️ Seleccionar Circuito:", circuitos_est)
 
                 df_circ = df_validos[df_validos['Circuito'] == circ_sel].sort_values('Vuelta')
-
-                # --- 2. FILTRO DE CARRERA ---
                 cargas_disponibles = sorted(list(df_circ['Carrera'].unique()))
                 
+                carrera_sel = "Todas las Carreras"
                 if len(cargas_disponibles) > 1:
                     opciones_carrera = ["Todas las Carreras"] + cargas_disponibles
                     carrera_sel = st.radio("🏁 Seleccionar Carrera:", opciones_carrera, horizontal=True)
@@ -1712,10 +1551,9 @@ elif opcion == "Estadisticas":
 
                 pilotos_disponibles = sorted(list(df_circ['Piloto'].unique()))
                 
-                # --- 3. SELECCIÓN DE PILOTOS ---
+                # 2. COMPARATIVA FRENTE A FRENTE EN SIDEBAR
                 st.sidebar.markdown("---")
                 st.sidebar.subheader("Comparativa Frente a Frente")
-                
                 p1 = st.sidebar.selectbox("Piloto 1:", pilotos_disponibles, index=0 if len(pilotos_disponibles) > 0 else 0)
                 p2_idx = 1 if len(pilotos_disponibles) > 1 else 0
                 p2 = st.sidebar.selectbox("Piloto 2:", pilotos_disponibles, index=p2_idx)
@@ -1723,15 +1561,15 @@ elif opcion == "Estadisticas":
                 df_p1 = df_circ[df_circ['Piloto'] == p1]
                 df_p2 = df_circ[df_circ['Piloto'] == p2]
 
-                # --- CÁLCULO DE RÉCORD ---
+                # Métricas de Piloto 1
                 rec_p1 = df_p1['Tiempo_Seg'].min() if not df_p1.empty else None
                 rec_p1_str = limpiar_tiempo_str(df_p1.loc[df_p1['Tiempo_Seg'].idxmin(), 'Tiempo']) if rec_p1 else "--:--"
 
+                # Métricas de Piloto 2
                 rec_p2 = df_p2['Tiempo_Seg'].min() if not df_p2.empty else None
                 rec_p2_str = limpiar_tiempo_str(df_p2.loc[df_p2['Tiempo_Seg'].idxmin(), 'Tiempo']) if rec_p2 else "--:--"
 
-                # --- PROMEDIO DEL EXCEL ---
-                carrera_actual = df_circ['Carrera'].iloc[0] if 'carrera_sel' in locals() and carrera_sel != "Todas las Carreras" else 'Carrera 1'
+                carrera_actual = df_circ['Carrera'].iloc[0] if carrera_sel != "Todas las Carreras" and not df_circ.empty else 'Carrera 1'
                 
                 prom_p1_str_raw = promedios_excel.get((circ_sel, carrera_actual, p1))
                 prom_p2_str_raw = promedios_excel.get((circ_sel, carrera_actual, p2))
@@ -1742,7 +1580,7 @@ elif opcion == "Estadisticas":
                 str_prom_p1 = formatear_mm_ss_ms(prom_p1)
                 str_prom_p2 = formatear_mm_ss_ms(prom_p2)
 
-                # --- CÁLCULO DE REGULARIDAD (Filtra vueltas > 5% del RÉCORD personal) ---
+                # Desviación / Regularidad (Vuelta limpia <= 105% del récord personal)
                 def filtrar_regularidad_piloto(df_piloto):
                     if df_piloto.empty:
                         return df_piloto
@@ -1766,7 +1604,7 @@ elif opcion == "Estadisticas":
                     txt_reg_p1 = f"±{std_p1:.3f}s" if std_p1 is not None else "--"
                     txt_reg_p2 = f"±{std_p2:.3f}s" if std_p2 is not None else "--"
 
-                # --- TARJETAS SUPERIORES ---
+                # 3. TARJETAS DE PILOTOS Y DUELOS DIRECTOS
                 st.markdown("<br>", unsafe_allow_html=True)
                 c1, c2 = st.columns(2)
                 
@@ -1792,9 +1630,7 @@ elif opcion == "Estadisticas":
                     </div>
                     """, unsafe_allow_html=True)
 
-                # --- DUELOS DIRECTOS ---
                 c3, c4 = st.columns(2)
-                
                 if rec_p1 and rec_p2:
                     diff_rec = rec_p1 - rec_p2
                     ganador_rec = p1 if diff_rec < 0 else p2
@@ -1827,43 +1663,58 @@ elif opcion == "Estadisticas":
                     </div>
                     """, unsafe_allow_html=True)
 
-                # --- GRÁFICO (FILTRA PACE CAR >15% RESPECTO AL PROMEDIO DEL MEJOR PILOTO) ---
+                # =========================================================================
+                # 4. GRÁFICO DE EVOLUCIÓN CON PLOTLY (ANCHO COMPLETO)
+                # =========================================================================
                 st.markdown("---")
-                st.subheader("📈 Gráfico de Evolución de Ritmo (Sin Pace Car)")
+                st.subheader("📈 Gráfico de Evolución de Ritmo")
 
-                promedio_mejor_piloto = df_circ.groupby('Piloto')['Tiempo_Seg'].mean().min()
-                umbral_corte_pc = promedio_mejor_piloto * 1.15
-                df_grafico = df_circ[df_circ['Tiempo_Seg'] <= umbral_corte_pc].copy()
+                # 1. Contenedor independiente para asegurar ancho completo
+                with st.container():
+                    limpiar_outliers = st.checkbox("🧹 Filtrar vueltas lentas / Pace Car", value=False)
+                    st.caption("💡 **¿Para qué sirve?** Detecta y remueve vueltas con incidentes o Pace Car para hacer 'zoom' en el eje Y y analizar el ritmo limpio de carrera.")
 
-                df_grafico['Tiempo_Fecha'] = pd.to_datetime(df_grafico['Tiempo_Seg'], unit='s')
-                df_grafico['Tiempo_Formateado'] = df_grafico['Tiempo_Seg'].apply(formatear_mm_ss_ms)
+                    # Selección de datos según el switch
+                    if limpiar_outliers:
+                        df_grafico = filtrar_grafico_inteligente(df_circ)
+                        eje_y = 'Tiempo_Fecha'
+                        etiqueta_y = 'Tiempo de Vuelta'
+                    else:
+                        df_grafico = df_circ.copy()
+                        eje_y = 'Tiempo_Seg'
+                        etiqueta_y = 'Segundos de Carrera'
 
-                fig_line = px.line(
-                    df_grafico,
-                    x='Vuelta',
-                    y='Tiempo_Fecha',
-                    color='Piloto',
-                    markers=True,
-                    labels={'Tiempo_Fecha': 'Tiempo de Vuelta', 'Vuelta': 'Número de Vuelta'},
-                    template="plotly_dark",
-                    hover_data={'Tiempo_Fecha': False, 'Tiempo_Formateado': True}
-                )
+                    df_grafico['Tiempo_Fecha'] = pd.to_datetime(df_grafico['Tiempo_Seg'], unit='s')
+                    df_grafico['Tiempo_Formateado'] = df_grafico['Tiempo_Seg'].apply(formatear_mm_ss_ms)
 
-                fig_line.update_layout(
-                    height=480,
-                    hovermode="x unified",
-                    xaxis=dict(showgrid=True, gridcolor="#2a2e3d", dtick=1),
-                    yaxis=dict(
-                        showgrid=True, 
-                        gridcolor="#2a2e3d", 
-                        tickformat='%M:%S,%3f'
-                    ),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                )
+                    # Gráfico de Plotly
+                    fig_line = px.line(
+                        df_grafico,
+                        x='Vuelta',
+                        y=eje_y,
+                        color='Piloto',
+                        markers=True,
+                        labels={eje_y: etiqueta_y, 'Vuelta': 'Número de Vuelta'},
+                        template="plotly_dark",
+                        hover_data={'Tiempo_Fecha': False, 'Tiempo_Seg': False, 'Tiempo_Formateado': True}
+                    )
 
-                st.plotly_chart(fig_line, use_container_width=True)
+                    formato_y = '%M:%S,%3f' if limpiar_outliers else None
 
-                # --- TABLA COMPARATIVA ---
+                    fig_line.update_layout(
+                        height=520,
+                        autosize=True,
+                        margin=dict(l=20, r=20, t=30, b=20),
+                        hovermode="x unified",
+                        xaxis=dict(showgrid=True, gridcolor="#2a2e3d", dtick=1),
+                        yaxis=dict(showgrid=True, gridcolor="#2a2e3d", tickformat=formato_y),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                    )
+
+                    # Renderizado forzado a ancho completo
+                    st.plotly_chart(fig_line, use_container_width=True)
+
+                # 5. TABLA COMPARATIVA
                 st.subheader("📋 Historial de Tiempos Vuelta a Vuelta")
                 df_tabla_base = df_circ[['Vuelta', 'Piloto', 'Tiempo_Seg']].drop_duplicates(subset=['Vuelta', 'Piloto']).copy()
                 df_tabla_base['Tiempo'] = df_tabla_base['Tiempo_Seg'].apply(formatear_mm_ss_ms)
@@ -1874,10 +1725,388 @@ elif opcion == "Estadisticas":
                 
                 st.dataframe(df_tabla.drop(columns=['Vuelta']), use_container_width=True, hide_index=True)
 
+                # 6. ANÁLISIS DE RENDIMIENTO CON LASTRE TÉCNICO
+                st.markdown("---")
+                st.subheader("🏋️ Análisis de Rendimiento con Lastre Técnico")
+                st.write("Evaluación histórica del promedio de puntos sumados en relación a los Kg cargados:")
+
+                df_hoja1_sim = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Hoja1', header=None, engine='openpyxl')
+                columna_f_sim = df_hoja1_sim.iloc[:, 5].astype(str).str.strip().str.upper()
+                
+                df_puntos_aux = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Tabla Final', engine='openpyxl')
+                df_puntos_aux.columns = [str(c).strip() for c in df_puntos_aux.columns]
+
+                indices_pilotos_hoja1 = {"Agus": 6, "Pablo": 8, "Juandi": 10, "Eze": 12}
+                pilotos_torneo = list(indices_pilotos_hoja1.keys())
+
+                columnas_fechas_reales = [col for col in df_puntos_aux.columns if str(col).strip().upper().startswith("FECHA")]
+                ultima_fecha_real_num = 0
+                for idx_f, col_f in enumerate(columnas_fechas_reales):
+                    if df_puntos_aux[col_f].astype(float).sum() > 0:
+                        ultima_fecha_real_num = idx_f + 1
+                if ultima_fecha_real_num == 0:
+                    ultima_fecha_real_num = 7
+
+                filas_lastre_fecha_real = columna_f_sim[columna_f_sim.str.contains("LASTRE FECHA|LASTRE.*FECHA", na=False)].index.tolist()
+                filas_lastre_acum_real = columna_f_sim[columna_f_sim.str.contains("LASTRE ACUMULADO|LASTRE.*ACUM", na=False)].index.tolist()
+
+                rangos_peso = ["0-20 Kg", "21-40 Kg", "41-60 Kg", "61-80 Kg+"]
+                historial_peso_puntos = {p: {r: [] for r in rangos_peso} for p in pilotos_torneo}
+
+                for idx_c, fila_total in enumerate(filas_lastre_fecha_real):
+                    for piloto, col_idx in indices_pilotos_hoja1.items():
+                        val_puntos = df_hoja1_sim.iloc[fila_total, col_idx]
+                        puntos_limpios = str(val_puntos).replace(',', '.', 1) if pd.notna(val_puntos) else "0.0"
+                        
+                        # Validar si hay puntos registrados en esta fecha
+                        try:
+                            pts_fecha = float(puntos_limpios)
+                        except ValueError:
+                            pts_fecha = 0.0
+
+                        # Si la fecha no se ha corrido/cargado aún (0 puntos o celda vacía), se omite
+                        if pd.isna(val_puntos) or str(val_puntos).strip() in ['', 'nan', 'None']:
+                            continue
+
+                        kilos_largada = 0.0
+                        if idx_c > 0:
+                            idx_bloque_anterior = idx_c - 1
+                            if idx_bloque_anterior < len(filas_lastre_acum_real):
+                                fila_lastre_anterior = filas_lastre_acum_real[idx_bloque_anterior]
+                                val_lastre = df_hoja1_sim.iloc[fila_lastre_anterior, col_idx]
+                                if pd.notna(val_lastre):
+                                    k_str = str(val_lastre).upper().replace("KG", "").replace(',', '.').strip()
+                                    try:
+                                        kilos_largada = float(k_str)
+                                    except ValueError:
+                                        kilos_largada = 0.0
+
+                        if kilos_largada <= 20.0: rango_elegido = "0-20 Kg"
+                        elif kilos_largada <= 40.0: rango_elegido = "21-40 Kg"
+                        elif kilos_largada <= 60.0: rango_elegido = "41-60 Kg"
+                        else: rango_elegido = "61-80 Kg+"
+                            
+                        historial_peso_puntos[piloto][rango_elegido].append(pts_fecha)
+
+                estilos_mapa_peso = """
+                <style>
+                .contenedor-peso { background-color: #1a1c23; border-top: 4px solid #ff1801; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 2px 2px 10px rgba(0,0,0,0.4); }
+                .titulo-peso { color: #ff1801; font-size: 16px; font-weight: bold; text-align: center; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+                .fila-piloto-peso { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #2d313f; }
+                .fila-piloto-peso:last-child { border-bottom: none; }
+                .nombre-piloto-peso { color: #ffffff; font-weight: 500; font-size: 14px; }
+                .datos-piloto-peso { text-align: right; }
+                .pts-peso { color: #ffffff; font-weight: bold; font-size: 15px; font-family: 'monospace'; }
+                .carreras-peso { color: #8a8d9a; font-size: 11px; display: block; }
+                </style>
+                """
+                st.markdown(estilos_mapa_peso, unsafe_allow_html=True)
+                columnas_rangos = st.columns(4)
+
+                for idx_rango, rango in enumerate(rangos_peso):
+                    with columnas_rangos[idx_rango]:
+                        html_bloque = '<div class="contenedor-peso">'
+                        html_bloque += '<div class="titulo-peso">📦 ' + str(rango) + '</div>'
+                        
+                        tabla_pilotos_rango = []
+                        for piloto in pilotos_torneo:
+                            lista_puntos = historial_peso_puntos[piloto][rango]
+                            cant_fechas = len(lista_puntos)
+                            if cant_fechas > 0:
+                                promedio = sum(lista_puntos) / cant_fechas
+                                txt_fechas = f"en {cant_fechas} GP" if cant_fechas > 1 else "en 1 GP"
+                                tabla_pilotos_rango.append({"nombre": piloto, "promedio": promedio, "txt_pts": f"{promedio:.1f} pts", "txt_fechas": txt_fechas})
+                            else:
+                                tabla_pilotos_rango.append({"nombre": piloto, "promedio": -1.0, "txt_pts": "-", "txt_fechas": "0 GP"})
+                        
+                        tabla_pilotos_rango = sorted(tabla_pilotos_rango, key=lambda x: x["promedio"], reverse=True)
+                        for p_data in tabla_pilotos_rango:
+                            html_bloque += '<div class="fila-piloto-peso">'
+                            html_bloque += '    <span class="nombre-piloto-peso">🏎️ ' + str(p_data["nombre"]) + '</span>'
+                            html_bloque += '    <div class="datos-piloto-peso">'
+                            html_bloque += '        <span class="pts-peso">' + str(p_data["txt_pts"]) + '</span>'
+                            html_bloque += '        <span class="carreras-peso">' + str(p_data["txt_fechas"]) + '</span>'
+                            html_bloque += '    </div>'
+                            html_bloque += '</div>'
+                        
+                        html_bloque += '</div>'
+                        st.markdown(html_bloque, unsafe_allow_html=True)
+                st.info("💡 **Análisis de Telemetría:** Las tarjetas ordenan automáticamente a los pilotos de mayor a menor efectividad dentro de cada rango de Kg.")
+
+                # =========================================================================
+                # 🕸️ RADAR MULTIVARIABLE DE ESTADÍSTICAS (CÁLCULO DE FECHAS CORREGIDO)
+                # =========================================================================
+                st.markdown("---")
+                st.subheader("🕸️ Perfil Comparativo Multivariable")
+                st.caption("Haz clic en los nombres de los pilotos en la leyenda para activar o desactivar su perfil.")
+
+                try:
+                    # 1. Leer el Excel directamente
+                    df_raw = pd.read_excel(ARCHIVO_EXCEL, header=None)
+                    #st.write(f"Archivo cargado. Dimensiones: {df_raw.shape}")
+                    # Mapeo de columnas según matriz de Excel
+                    mapa_pilotos = {
+                        "Agus": {"col_val": 6, "col_pts": 7},
+                        "Pablo": {"col_val": 8, "col_pts": 9},
+                        "Juandi": {"col_val": 10, "col_pts": 11},
+                        "Eze": {"col_val": 12, "col_pts": 13}
+                    }
+
+                    # Identificar filas clave en Columna F (idx 5)
+                    col_f = df_raw.iloc[:, 5].astype(str).str.strip().str.upper()
+
+                    filas_c1 = df_raw[col_f == "C1"]
+                    filas_c2 = df_raw[col_f == "C2"]
+                    filas_pole = df_raw[col_f == "POLE"]
+
+                    # =========================================================================
+                    # BUCLE DE CÁLCULO DE ESTADÍSTICAS (ROBUSTO)
+                    # =========================================================================
+                    datos_radar = []
+
+                    for piloto in pilotos_torneo:
+                        if piloto not in mapa_pilotos:
+                            continue
+
+                        idx_v = mapa_pilotos[piloto]["col_val"]
+                        idx_p = mapa_pilotos[piloto]["col_pts"]
+
+                        # 1. Extraer posiciones válidas de C1 y C2
+                        vals_c1_raw = pd.to_numeric(filas_c1.iloc[:, idx_v], errors='coerce')
+                        vals_c2_raw = pd.to_numeric(filas_c2.iloc[:, idx_v], errors='coerce')
+
+                        pos_c1 = [int(x) for x in vals_c1_raw if pd.notna(x) and int(x) in [1, 2, 3, 4]]
+                        pos_c2 = [int(x) for x in vals_c2_raw if pd.notna(x) and int(x) in [1, 2, 3, 4]]
+                        
+                        # 2. DEFINICIÓN DE DENOMINADORES
+                        # Usamos C1 como base para las fechas del torneo (asumiendo que todos corren C1)
+                        fechas_disputadas = len(pos_c1) if len(pos_c1) > 0 else 1
+                        
+                        todas_pos = pos_c1 + pos_c2
+                        total_mangas = len(todas_pos) if len(todas_pos) > 0 else 1
+                        
+                        # Cálculo de posición promedio
+                        pos_prom = (sum(todas_pos) / total_mangas) if total_mangas > 0 else 2.5
+                        
+                        # Poles totales
+                        poles_fechas = pd.to_numeric(filas_pole.iloc[:, idx_p], errors='coerce').fillna(0)
+                        poles_totales = int((poles_fechas == 1).sum())
+
+                        # 3. CÁLCULO DE MÉTRICAS
+                        pct_conversion_pole = (poles_totales / fechas_disputadas) * 100.0
+
+                        # Pole a P1 en C1
+                        pole_y_p1_count = 0
+                        for idx_f in filas_pole.index:
+                            val_pole = pd.to_numeric(df_raw.iloc[idx_f, idx_p], errors='coerce')
+                            idx_c1_asoc = idx_f - 2
+                            val_c1 = pd.to_numeric(df_raw.iloc[idx_c1_asoc, idx_v], errors='coerce') if idx_c1_asoc in df_raw.index else None
+                            if val_pole == 1 and val_c1 == 1:
+                                pole_y_p1_count += 1
+
+                        pct_pole_a_p1 = (pole_y_p1_count / poles_totales * 100.0) if poles_totales > 0 else 0.0
+                        pct_ritmo = max(0.0, ((5.0 - pos_prom) / 4.0) * 100.0)
+                        
+                        cant_podios = sum(1 for p in todas_pos if p in [1, 2, 3])
+                        pct_podios = (cant_podios / total_mangas) * 100.0
+                        
+                        cant_victorias = sum(1 for p in todas_pos if p == 1)
+                        pct_victorias = (cant_victorias / total_mangas) * 100.0
+
+                        datos_radar.append({
+                            "Piloto": piloto,
+                            "pos_prom": pos_prom,
+                            "poles_real": poles_totales,
+                            "pct_ritmo": pct_ritmo,
+                            "pct_podios": pct_podios,
+                            "cant_podios": cant_podios,
+                            "cant_victorias": cant_victorias,
+                            "pct_victorias": pct_victorias,
+                            "total_mangas": total_mangas,
+                            "fechas_disputadas": fechas_disputadas,
+                            "pct_conversion_pole": pct_conversion_pole,
+                            "pct_pole_a_p1": pct_pole_a_p1
+                        })
+
+                    for piloto in pilotos_torneo:
+                        if piloto not in mapa_pilotos:
+                            continue
+
+                        idx_v = mapa_pilotos[piloto]["col_val"]
+                        idx_p = mapa_pilotos[piloto]["col_pts"]
+
+                        # Extraer posiciones válidas
+                        vals_c1_raw = pd.to_numeric(filas_c1.iloc[:, idx_v], errors='coerce')
+                        vals_c2_raw = pd.to_numeric(filas_c2.iloc[:, idx_v], errors='coerce')
+
+                        pos_c1 = [int(x) for x in vals_c1_raw if pd.notna(x) and int(x) in [1, 2, 3, 4]]
+                        pos_c2 = [int(x) for x in vals_c2_raw if pd.notna(x) and int(x) in [1, 2, 3, 4]]
+                        
+                        # Lógica corregida para denominadores iguales
+                        fechas_disputadas = len(pos_c1) if len(pos_c1) > 0 else 1
+                        todas_pos = pos_c1 + pos_c2
+                        total_mangas = len(todas_pos) if len(todas_pos) > 0 else 1
+                        
+                        # Cálculo de posición promedio (necesaria para el % Ritmo)
+                        pos_prom = (sum(todas_pos) / total_mangas) if len(todas_pos) > 0 else 2.5
+                        
+                        # Poles totales del piloto
+                        poles_fechas = pd.to_numeric(filas_pole.iloc[:, idx_p], errors='coerce').fillna(0)
+                        poles_totales = int((poles_fechas == 1).sum())
+
+                        # 1. % Conversión Pole
+                        pct_conversion_pole = (poles_totales / fechas_disputadas) * 100.0
+
+                        # 2. % Pole a P1 en C1
+                        pole_y_p1_count = 0
+                        for idx_f in filas_pole.index:
+                            val_pole = pd.to_numeric(df_raw.iloc[idx_f, idx_p], errors='coerce')
+                            idx_c1_asoc = idx_f - 2
+                            val_c1 = pd.to_numeric(df_raw.iloc[idx_c1_asoc, idx_v], errors='coerce') if idx_c1_asoc in df_raw.index else None
+                            if val_pole == 1 and val_c1 == 1:
+                                pole_y_p1_count += 1
+
+                        pct_pole_a_p1 = (pole_y_p1_count / poles_totales * 100.0) if poles_totales > 0 else 0.0
+
+                        # 3. % Ritmo Carrera
+                        pct_ritmo = max(0.0, ((5.0 - pos_prom) / 4.0) * 100.0)
+
+                        # 4. % Podios
+                        cant_podios = sum(1 for p in todas_pos if p in [1, 2, 3])
+                        pct_podios = (cant_podios / total_mangas) * 100.0
+
+                        # 5. % Victorias
+                        cant_victorias = sum(1 for p in todas_pos if p == 1)
+                        pct_victorias = (cant_victorias / total_mangas) * 100.0
+                        datos_radar.append({
+                            "Piloto": piloto,
+                            "pos_prom": pos_prom,
+                            "poles_real": poles_totales,
+                            "pct_ritmo": pct_ritmo,
+                            "pct_podios": pct_podios,
+                            "cant_podios": cant_podios,
+                            "cant_victorias": cant_victorias,
+                            "pct_victorias": pct_victorias,
+                            "total_mangas": total_mangas,
+                            "fechas_disputadas": fechas_disputadas,
+                            "pct_conversion_pole": pct_conversion_pole,
+                            "pct_pole_a_p1": pct_pole_a_p1
+                        })
+                    filas_plotly = []
+                    for d in datos_radar:
+                        piloto = d["Piloto"]
+
+                        metricas = [
+                            ("% Pole a P1 (C1)", d["pct_pole_a_p1"], f"{d['pct_pole_a_p1']:.1f}%"),
+                            ("% Podios", d["pct_podios"], f"{d['pct_podios']:.1f}% ({d['cant_podios']}/{d['total_mangas']} mangas)"),
+                            ("% Victorias", d["pct_victorias"], f"{d['pct_victorias']:.1f}% ({d['cant_victorias']}/{d['total_mangas']} victorias)"),
+                            ("% Conversión Pole", d["pct_conversion_pole"], f"{d['pct_conversion_pole']:.1f}% ({d['poles_real']}/{d['fechas_disputadas']} fechas)"),
+                            ("% Ritmo Carrera", d["pct_ritmo"], f"P{d['pos_prom']:.1f} Prom.")
+                        ]
+
+                        for eje, val_real_pct, txt_hover in metricas:
+                            filas_plotly.append({
+                                "Piloto": piloto,
+                                "Métrica": eje,
+                                "Valor_Norm": max(0.0, float(val_real_pct)),
+                                "Valor_Real": txt_hover
+                            })
+
+                    df_radar = pd.DataFrame(filas_plotly)
+
+                    # Cierre de polígonos
+                    listas_cerradas = []
+                    for piloto in pilotos_torneo:
+                        df_p_radar = df_radar[df_radar["Piloto"] == piloto].copy()
+                        if not df_p_radar.empty:
+                            primera_fila = df_p_radar.iloc[[0]].copy()
+                            df_p_radar = pd.concat([df_p_radar, primera_fila], ignore_index=True)
+                            listas_cerradas.append(df_p_radar)
+
+                    if listas_cerradas:
+                        df_radar = pd.concat(listas_cerradas, ignore_index=True)
+
+                    col_izq_r, col_centro_r, col_der_r = st.columns([0.2, 3, 0.2])
+
+                    with col_centro_r:
+                        fig_radar = px.line_polar(
+                            df_radar,
+                            r="Valor_Norm",
+                            theta="Métrica",
+                            color="Piloto",
+                            line_close=True,
+                            template="plotly_dark",
+                            color_discrete_map={
+                                "Agus": "#e10600",
+                                "Pablo": "#00b0ff",
+                                "Eze": "#ff9100",
+                                "Juandi": "#00e676"
+                            },
+                            custom_data=["Valor_Real", "Piloto"]
+                        )
+
+                        # Configuración visual e interacción limpia con el mouse
+                        fig_radar.update_traces(
+                            fill='toself',
+                            opacity=0.35,
+                            line=dict(width=3),
+                            marker=dict(size=8),
+                            hoveron='points+fills', 
+                            hovertemplate="🏎️ <b>%{customdata[1]}</b><br>📌 <b>%{theta}:</b> %{customdata[0]}<extra></extra>"
+                        )
+
+                        fig_radar.update_layout(
+                            paper_bgcolor="#0f111a",
+                            plot_bgcolor="#161925",
+                            hovermode="closest",
+                            polar=dict(
+                                bgcolor="#161925",
+                                radialaxis=dict(
+                                    visible=True,
+                                    range=[0, 105],
+                                    showticklabels=False,
+                                    linecolor="#2a2f45",
+                                    gridcolor="#2a2f45"
+                                ),
+                                angularaxis=dict(
+                                    gridcolor="#2a2f45",
+                                    linecolor="#2a2f45",
+                                    tickfont=dict(size=12, color="#ffffff")
+                                )
+                            ),
+                            margin=dict(l=40, r=40, t=20, b=30),
+                            height=450,
+                            showlegend=True,
+                            legend=dict(
+                                orientation="h",
+                                yanchor="bottom",
+                                y=-0.22,
+                                xanchor="center",
+                                x=0.5,
+                                font=dict(size=12, color="#ffffff")
+                            )
+                        )
+
+                        # Renderizado del gráfico
+                        st.plotly_chart(fig_radar, use_container_width=True, key="radar_final_correcto")
+
+                        # Explicación desplegable debajo del gráfico
+                        with st.expander("ℹ️ ¿Qué significa cada métrica del gráfico radar?"):
+                            st.markdown("""
+                            * **% Pole a P1 (C1):** Efectividad para convertir una Pole Position en victoria directa en la Carrera 1.
+                            * **% Podios:** Porcentaje de mangas disputadas (C1 y C2) en las que el piloto finalizó dentro del Top 3 (P1, P2 o P3).
+                            * **% Victorias:** Porcentaje de mangas ganadas (P1) sobre el total de competencias disputadas.
+                            * **% Conversión Pole:** Porcentaje de fechas disputadas en las que el piloto logró quedarse con la Pole Position.
+                            * **% Ritmo Carrera:** Desempeño según posición promedio final en todas las mangas (P1 = 100%, P4 = 25%).
+                            """)
+
+                except Exception as e_radar:
+                    st.warning(f"No se pudo cargar el radar multivariable: {e_radar}")
+
             else:
                 st.warning("No se detectaron datos en la pestaña 'Diferencia en Carrera'.")
 
         except Exception as e:
-            st.error(f"Error al generar las estadísticas: {e}")
+            st.error(f"Error al generar las estadísticas: {e}.")
     else:
         st.error(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")
