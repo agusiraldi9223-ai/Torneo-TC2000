@@ -1209,55 +1209,101 @@ elif opcion == "Simulador de Campeonato":
             st.error(f"🔥 ¡CAMBIO DE CORONA EN LA PROYECCIÓN! Al cabo de las fechas simuladas, **{lider_proyectado}** se consagraría líder del campeonato superando al escolta por {(puntos_lider_proy - segundo_proy_puntos):.2f} pts.")
         else:
             st.success(f"👑 ¡Automático! **{lider_proyectado}** resiste la presión y mantiene la punta del campeonato con un total proyectado de {puntos_lider_proy:.2f} pts.")
+    # =========================================================================
+    # 🎯 ANÁLISIS DE DEFINICIÓN DE CAMPEONATO (ÚLTIMA FECHA)
+    # =========================================================================
+    fecha_final_simulada_num = ultima_fecha_real_num + cant_fechas_a_proyectar
+    fechas_restantes_campeonato = max(0, 10 - fecha_final_simulada_num)
 
-        # =========================================================================
-        # 🧮 CALCULADORA MATEMÁTICA DE TÍTULO ACTUALIZADA AL 75% (46.75 PTS MAX)
-        # =========================================================================
+    if fechas_restantes_campeonato == 1:
         st.markdown("---")
-        st.subheader("🧮 Calculadora de Título Matemática")
+        st.subheader("🎯 Análisis de Definición de Campeonato")
 
-        fecha_final_simulada_num = ultima_fecha_real_num + cant_fechas_a_proyectar
-        fechas_restantes_campeonato = max(0, 10 - fecha_final_simulada_num)
+        df_ranking_actual = df_proyeccion_final.sort_values(by="Puntos Finales Proyectados", ascending=False).reset_index(drop=True)
+        lider_actual_escenario = df_ranking_actual.loc[0, "Piloto"]
+        pts_lider = df_ranking_actual.loc[0, "Puntos Finales Proyectados"]
         
-        # 🛠️ REGLAMENTO OFICIAL ACTUALIZADO: 25 (C1) + 18.75 (C2) + 1 (Pole) + 1 (VR C1) + 1 (VR C2) = 46.75 pts
-        puntos_maximos_por_fecha = 46.75
-        puntos_en_juego_totales = fechas_restantes_campeonato * puntos_maximos_por_fecha
+        pts_segundo_lugar = df_ranking_actual.loc[1, "Puntos Finales Proyectados"] if len(df_ranking_actual) > 1 else pts_lider
+        brecha_lider = pts_lider - pts_segundo_lugar
 
-        if fechas_restantes_campeonato > 0:
-            st.write(f"📊 Al finalizar la simulación, quedarán **{fechas_restantes_campeonato} fechas en juego** (Máximo absoluto disponible: **{puntos_en_juego_totales:.1f} pts**).")
-            
-            pilotos_con_chances = []
-            pilotos_eliminados = []
-            
-            for _, row_p in df_proyeccion_final.iterrows():
-                p_nombre = row_p["Piloto"]
-                p_puntos = row_p["Puntos Finales Proyectados"]
-                distancia_al_lider = puntos_lider_proy - p_puntos
-                
-                if distancia_al_lider <= puntos_en_juego_totales:
-                    if p_nombre == lider_proyectado:
-                        pilotos_con_chances.append(f"👑 **{p_nombre}** (Líder actual)")
-                    else:
-                        pilotos_con_chances.append(f"🏎️ **{p_nombre}** (A {distancia_al_lider:.2f} pts del líder)")
-                else:
-                    pilotos_eliminados.append(p_nombre)
-            
-            col_vivos, col_eliminados = st.columns(2)
-            with col_vivos:
-                st.markdown("🟢 **Siguen en la Pelea Matemática:**")
-                for p_vivo in pilotos_con_chances: st.write(p_vivo)
-            with col_eliminados:
-                st.markdown("🔴 **Matemáticamente Sin Chances:**")
-                if pilotos_eliminados:
-                    for p_chau in pilotos_eliminados: st.write(f"❌ {p_chau}")
-                else:
-                    st.write("¡Ninguno! Todos los pilotos mantienen chances matemáticas.")
+        # 1. Selector de tipo de puntaje único (antes del cartel azul)
+        st.markdown("<h4 style='color: #262730; margin-bottom: -10px;'>🏁 Selecciona el tipo de puntaje para la última fecha:</h4>", unsafe_allow_html=True)
+        
+        tipo_fecha = st.radio(
+            "Selecciona el tipo de puntaje para la última fecha:",
+            ["Normal (Máx. 46.75 pts)", "Especial x1.5 (Máx. 70.125 pts)"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="tipo_puntaje_decisivo_final"
+        )
+        
+        if "Especial" in tipo_fecha:
+            puntos_maximos_por_fecha = 46.75 * 1.5  
         else:
-            st.balloons()
-            st.markdown(f"## 🏆 ¡TENEMOS CAMPEÓN DEL TORNEO! ##\nMatemáticamente, **{lider_proyectado}** se consagra Campeón Oficial del Torneo TC2000 con **{puntos_lider_proy:.2f} puntos**.")
+            puntos_maximos_por_fecha = 46.75
 
-        st.markdown("---")
-        # =========================================================================
+        limite_seguro_lider = max(21.0, puntos_maximos_por_fecha - brecha_lider)
+        puntos_ejemplo_lider = max(21.0, limite_seguro_lider - 0.25)
+
+        # 2. Evaluación previa unificada y estricta para el resumen superior
+        siguen_pelea = []
+        sin_chances = []
+        
+        for _, row_esc in df_ranking_actual.iterrows():
+            p_name = row_esc["Piloto"]
+            p_pts = row_esc["Puntos Finales Proyectados"]
+            if p_name == lider_actual_escenario:
+                continue
+            p_brecha = pts_lider - p_pts
+            puntos_necesarios_perseguidor = p_brecha + puntos_ejemplo_lider
+            
+            if p_brecha > puntos_maximos_por_fecha or puntos_necesarios_perseguidor > puntos_maximos_por_fecha:
+                sin_chances.append(p_name)
+            else:
+                siguen_pelea.append((p_name, p_brecha))
+
+        # 3. Resumen visual superior sincronizado
+        cols_resumen = st.columns(2)
+        with cols_resumen[0]:
+            st.write("🟢 **Siguen en la Pelea Matemática:**")
+            st.write(f"👑 {lider_actual_escenario} (Líder actual)")
+            for p_n, p_b in siguen_pelea:
+                st.write(f"🏎️ {p_n} (A {p_b:.2f} pts del líder)")
+        with cols_resumen[1]:
+            st.write("🔴 **Matemáticamente Sin Chances:**")
+            if sin_chances:
+                for p_n in sin_chances:
+                    st.write(f"❌ {p_n}")
+            else:
+                st.write("Ninguno")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # 4. Cartel azul informativo justo debajo del selector
+        st.info(f"ℹ️ Fecha decisiva ({tipo_fecha}). Líder actual: **{lider_actual_escenario}** ({pts_lider:.2f} pts). Máximo a repartir: **{puntos_maximos_por_fecha:.3f} pts**.")
+
+        # 5. Expanders de detalle por piloto
+        for _, row_esc in df_ranking_actual.iterrows():
+            piloto_name = row_esc["Piloto"]
+            pts_piloto = row_esc["Puntos Finales Proyectados"]
+            brecha = pts_lider - pts_piloto
+            
+            with st.expander(f"🏎️ Situación de {piloto_name}"):
+                if piloto_name == lider_actual_escenario:
+                    segundo_nombre = df_ranking_actual.loc[1, "Piloto"] if len(df_ranking_actual) > 1 else "el segundo"
+                    limite_seguro = max(0.0, puntos_maximos_por_fecha - brecha_lider)
+                    
+                    st.write(f"👑 **Blindaje de Título:**")
+                    st.write(f"- Si sumas más de **{limite_seguro:.2f} puntos**, **{segundo_nombre}** ya no tiene forma matemática de alcanzarte por más que gane todo.")
+                
+                else:
+                    puntos_necesarios_perseguidor = brecha + puntos_ejemplo_lider
+                    
+                    st.write(f"🔥 **Condición de campeonato para {piloto_name}:**")
+                    if brecha > puntos_maximos_por_fecha or puntos_necesarios_perseguidor > puntos_maximos_por_fecha:
+                        st.write(f"- Matemáticamente **sin chances**: aun si haces la fecha perfecta, dependes de que {lider_actual_escenario} sume menos del mínimo posible.")
+                    else:
+                        st.write(f"- **La cuenta exacta:** Si **{lider_actual_escenario}** hace una fecha ajustada sumando por ejemplo **{puntos_ejemplo_lider:.2f} puntos**, tú estás obligado a sumar al menos **{puntos_necesarios_perseguidor:.2f} puntos** netos en el fin de semana para superarlo en la tabla final y arrebatarle el campeonato.")
         # 🏎️ PANEL VISUAL DE PROYECCIÓN GENERAL (ESTILO F1 TV - SIN TABLAS)
         # =========================================================================
         st.markdown("### 📊 Posiciones Finales Proyectadas")
@@ -1286,7 +1332,7 @@ elif opcion == "Simulador de Campeonato":
             font-size: 20px;
             font-weight: bold;
             font-family: 'monospace';
-            min-width: 35px;
+            midth: 35px;
         }
         .nombre-proy {
             color: #ffffff;
