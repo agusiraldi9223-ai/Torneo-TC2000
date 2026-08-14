@@ -959,11 +959,17 @@ elif opcion == "Duelo H2H":
                         f_idx = buscar_coordenada_fila(circuito, sesion)
                         if f_idx is not None:
                             try:
+                                if piloto1 not in indices_pilotos_fechas or piloto2 not in indices_pilotos_fechas:
+                                    continue
+                                    
                                 col_idx_p1 = indices_pilotos_fechas[piloto1]
-                                col_idx_p2 = indices_pilotos_fechas[piloto2]
+                                val_p1 = df_tiempos_crudo.iloc[f_idx, col_idx_p1]
                                 
-                                t_p1 = tiempo_a_segundos(df_tiempos_crudo.iloc[f_idx, col_idx_p1])
-                                t_p2 = tiempo_a_segundos(df_tiempos_crudo.iloc[f_idx, col_idx_p2])
+                                col_idx_p2 = indices_pilotos_fechas[piloto2]
+                                val_p2 = df_tiempos_crudo.iloc[f_idx, col_idx_p2]
+                                
+                                t_p1 = tiempo_a_segundos(val_p1)
+                                t_p2 = tiempo_a_segundos(val_p2)
                                 
                                 if t_p1 is not None and t_p2 is not None and t_p1 > 30.0 and t_p2 > 30.0:
                                     if t_p1 < t_p2:
@@ -974,7 +980,7 @@ elif opcion == "Duelo H2H":
                                         if tipo == "pole": poles_p2 += 1
                                         elif tipo == "vr1": vr1_p2 += 1
                                         elif tipo == "vr2": vr2_p2 += 1
-                            except KeyError:
+                            except Exception:
                                 pass
 
                 # --- INTERFAZ VISUAL: TARJETAS PERSONALIZADAS MINIMALISTAS ---
@@ -1037,6 +1043,7 @@ elif opcion == "Duelo H2H":
                     
         else:
             st.error("❌ No se encontraron las columnas exactas 'PILOTO' o 'PTS' en la pestaña 'Tabla Final'.")
+
 elif opcion == "Simulador de Campeonato":
     st.title("🔮 Simulador y Proyecciones del Campeonato")
     st.write("Calculadora matemática de título multi-fecha y evolución del lastre técnico en vivo.")
@@ -1297,13 +1304,20 @@ elif opcion == "Simulador de Campeonato":
                     st.write(f"- Si sumas más de **{limite_seguro:.2f} puntos**, **{segundo_nombre}** ya no tiene forma matemática de alcanzarte por más que gane todo.")
                 
                 else:
-                    puntos_necesarios_perseguidor = brecha + puntos_ejemplo_lider
+                    # Cálculo exacto basado en el piso del líder actual
+                    puntos_necesarios_reales = (pts_lider + 21.0) - pts_piloto
                     
                     st.write(f"🔥 **Condición de campeonato para {piloto_name}:**")
-                    if brecha > puntos_maximos_por_fecha or puntos_necesarios_perseguidor > puntos_maximos_por_fecha:
-                        st.write(f"- Matemáticamente **sin chances**: aun si haces la fecha perfecta, dependes de que {lider_actual_escenario} sume menos del mínimo posible.")
+                    
+                    if brecha > puntos_maximos_por_fecha:
+                        st.write(f"- Matemáticamente **sin chances**: aun si haces la fecha perfecta y ganas todo (46.75 pts), la brecha actual ({brecha:.2f} pts) es mayor al máximo que se puede repartir.")
+                    elif puntos_necesarios_reales > puntos_maximos_por_fecha:
+                        # Si la cuenta con el piso del líder le exige más del máximo de la fecha, 
+                        # significa que ni haciendo la fecha perfecta le alcanza si el líder hace el piso de 21.
+                        st.write(f"- **Condición extrema:** Aunque **{lider_actual_escenario}** haga el piso de la fecha (21.00 pts), tú necesitas sumar **{puntos_necesarios_reales:.2f} puntos**, lo cual supera el máximo de **{puntos_maximos_por_fecha:.3f} pts** disponibles. ⚠️ *Dependes de que el líder sume todavía menos del piso mínimo o sufra un abandono absoluto.*")
                     else:
-                        st.write(f"- **La cuenta exacta:** Si **{lider_actual_escenario}** hace una fecha ajustada sumando por ejemplo **{puntos_ejemplo_lider:.2f} puntos**, tú estás obligado a sumar al menos **{puntos_necesarios_perseguidor:.2f} puntos** netos en el fin de semana para superarlo en la tabla final y arrebatarle el campeonato.")
+                        st.write(f"- **La cuenta exacta:** Si **{lider_actual_escenario}** hace el piso de la fecha (**21.00 puntos**), tú estás obligado a sumar al menos **{puntos_necesarios_reales:.2f} puntos** netos en el fin de semana para superarlo y arrebatarle el campeonato.")
+
         # 🏎️ PANEL VISUAL DE PROYECCIÓN GENERAL (ESTILO F1 TV - SIN TABLAS)
         # =========================================================================
         st.markdown("### 📊 Posiciones Finales Proyectadas")
