@@ -160,7 +160,7 @@ st.sidebar.subheader("Campeonato Interno")
 
 opcion = st.sidebar.radio(
     "Navegación",
-    ["Resumen", "Comparativa de Tiempos", "Lastre", "Duelo H2H", "Simulador de Campeonato", "Estadisticas"]
+    ["Resumen", "Comparativa de Tiempos", "Lastre", "Duelo H2H", "Simulador de Campeonato", "Estadisticas", "Termas (Otro Grupo)"]
 )
 
 # Pilotos oficiales en tu orden exacto de columnas del Excel
@@ -2170,3 +2170,80 @@ elif opcion == "Estadisticas":
             st.error(f"Error al generar las estadísticas: {e}.")
     else:
         st.error(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")
+
+elif opcion == "Termas (Otro Grupo)":
+    st.title("🏎️ Clasificación Temporal - Termas TN")
+    st.write("Datos temporales de clasificación de la carrera con el otro grupo.")
+
+    try:
+        # Mostramos las solapas disponibles para verificar el nombre exacto
+        xls = pd.ExcelFile(ARCHIVO_EXCEL, engine='openpyxl')
+        st.write(f"📁 Hojas encontradas en el Excel: {xls.sheet_names}")
+        
+        df_temp = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', header=None, engine='openpyxl', dtype=str)
+        st.write(f"📊 Total de filas en la hoja: {len(df_temp)}")
+        
+        fila_nombres_idx = 30
+        fila_clasif_idx = 31
+        
+        resultados_clasif = []
+        
+        if len(df_temp) > fila_clasif_idx:
+            nombres = df_temp.iloc[fila_nombres_idx, 2:8].values  
+            tiempos = df_temp.iloc[fila_clasif_idx, 2:8].values
+            
+            for idx_col, (nom, t_val) in enumerate(zip(nombres, tiempos), start=2):
+                st.write(f"Col {idx_col} -> Piloto: '{nom}' | Tiempo: '{t_val}'")
+                
+                if pd.notna(nom) and str(nom).strip() != "" and str(nom).strip() != "nan":
+                    t_str = str(t_val).strip()
+                    t_seg = None
+                    try:
+                        if ":" in t_str:
+                            partes = t_str.replace(",", ".").split(":")
+                            minutos = float(partes[0])
+                            segundos = float(partes[1])
+                            t_seg = (minutos * 60) + segundos
+                    except:
+                        pass
+                    
+                    if t_seg is None:
+                        try:
+                            t_seg = float(t_val)
+                        except:
+                            pass
+                            
+                    if t_seg is not None:
+                        resultados_clasif.append({
+                            "Piloto": str(nom).strip(), 
+                            "Tiempo": t_seg, 
+                            "Str": t_str
+                        })
+        
+        resultados_clasif = sorted(resultados_clasif, key=lambda x: x["Tiempo"])
+        
+        st.markdown("---")
+        st.subheader("📊 Grilla de Partida - Termas TN")
+        
+        if not resultados_clasif:
+            st.warning("⚠️ El script leyó las celdas pero no encontró valores válidos de pilotos o tiempos.")
+        
+        for idx, res in enumerate(resultados_clasif):
+            puesto = idx + 1
+            color_borde = "#00e676" if puesto == 1 else "#e10600"
+            
+            st.markdown(f"""
+            <div style="background-color: #161925; border-left: 5px solid {color_borde}; border-radius: 8px; padding: 12px 18px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="color: #e10600; font-size: 18px; font-weight: bold; font-family: 'monospace'; margin-right: 15px;">#{puesto}</span>
+                    <span style="color: #ffffff; font-size: 16px; font-weight: bold;">🏎️ {res['Piloto']}</span>
+                </div>
+                <div>
+                    <span style="color: #9fa6b2; font-size: 12px; margin-right: 10px;">TIEMPO:</span>
+                    <span style="color: #ffffff; font-size: 18px; font-weight: bold; font-family: 'monospace';">{res['Str']}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    except Exception as e:
+        st.error(f"❌ Error detallado de Python: {e}")
