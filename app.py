@@ -4,30 +4,49 @@ import plotly.express as px
 import os
 import datetime
 
-# 1. CONFIGURACIÓN DE LA PÁGINA
-st.set_page_config(
-    page_title="Torneo _TC2000 - Dashboard",
-    page_icon="🏎️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Estilos CSS oscuros tipo F1 TV
+# ==========================================
+# 1. CONFIGURACIÓN Y ESTILOS MODERNOS (F1/Motorsport TV Style)
+# ==========================================
 st.markdown("""
     <style>
-    .main { background-color: #0f111a; color: #ffffff; }
-    [data-testid="stSidebar"] { background-color: #161925; }
-    div.stButton > button:first-child { background-color: #e10600; color: white; border-radius: 5px; }
-    .metric-box {
-        background-color: #161925;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 5px solid #e10600;
-        margin-bottom: 10px;
+    /* Eliminamos restricciones de ancho para que use toda la pantalla */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        max-width: 95% !important;
+    }
+    
+    [data-testid="stSidebar"] { 
+        background-color: #121620; 
+        border-right: 1px solid #1f293d;
+    }
+    
+    /* Textos del sidebar en blanco brillante */
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p {
+        color: #ffffff !important;
+    }
+
+    /* Botonera moderna estilo tarjeta */
+    div.stButton > button {
+        width: 100%;
+        background-color: #1a2233;
+        color: #ffffff;
+        border: 1px solid #2d3b55;
+        border-radius: 8px;
+        padding: 12px;
+        font-weight: 600;
+        text-align: left;
+        transition: all 0.3s ease;
+        margin-bottom: 6px;
+    }
+    div.stButton > button:hover {
+        background-color: #e10600;
+        border-color: #e10600;
+        color: #ffffff;
+        box-shadow: 0 4px 12px rgba(225, 6, 0, 0.4);
     }
     </style>
-    """, unsafe_allow_html=True)
-
+""", unsafe_allow_html=True)
 # Nombre de tu archivo local
 ARCHIVO_EXCEL = "Torneo.xlsx"
 
@@ -153,16 +172,32 @@ else:
     df_tiempos = pd.DataFrame()
     opciones_fechas_combinadas = ["Campeonato Completo"]
 
-# 2. MENÚ LATERAL
-st.sidebar.image("https://flaticon.com", width=80) 
-st.sidebar.title("Torneo _TC2000")
-st.sidebar.subheader("Campeonato Interno")
+# ==========================================
+# 2. MENÚ LATERAL MODERNIZADO
+# ==========================================
+st.sidebar.markdown("## 🏎️ Torneo TC2000")
+st.sidebar.markdown("##### Campeonato Interno")
+st.sidebar.markdown("---")
 
-opcion = st.sidebar.radio(
-    "Navegación",
-    ["Resumen", "Comparativa de Tiempos", "Lastre", "Duelo H2H", "Simulador de Campeonato", "Estadisticas", "Termas (Otro Grupo)"]
-)
+# Inicializar estado de navegación
+if 'pagina_activa' not in st.session_state:
+    st.session_state['pagina_activa'] = "Resumen"
 
+# Botonera con iconos y diseño moderno
+if st.sidebar.button("📊 Resumen General", use_container_width=True):
+    st.session_state['pagina_activa'] = "Resumen"
+if st.sidebar.button("⏱️ Comparativa de Tiempos", use_container_width=True):
+    st.session_state['pagina_activa'] = "Comparativa de Tiempos"
+if st.sidebar.button("⚖️ Lastre", use_container_width=True):
+    st.session_state['pagina_activa'] = "Lastre"
+if st.sidebar.button("⚔️ Duelo H2H", use_container_width=True):
+    st.session_state['pagina_activa'] = "Duelo H2H"
+if st.sidebar.button("🎮 Simulador de Campeonato", use_container_width=True):
+    st.session_state['pagina_activa'] = "Simulador de Campeonato"
+if st.sidebar.button("📈 Estadísticas", use_container_width=True):
+    st.session_state['pagina_activa'] = "Estadísticas"
+
+opcion = st.session_state['pagina_activa']
 # Pilotos oficiales en tu orden exacto de columnas del Excel
 pilotos = ["Agus", "Pablo", "Juandi", "Eze"]
 df_resumen = pd.DataFrame({
@@ -2171,79 +2206,3 @@ elif opcion == "Estadisticas":
     else:
         st.error(f"No se encontró el archivo '{ARCHIVO_EXCEL}'.")
 
-elif opcion == "Termas (Otro Grupo)":
-    st.title("🏎️ Clasificación Temporal - Termas TN")
-    st.write("Datos temporales de clasificación de la carrera con el otro grupo.")
-
-    try:
-        # Mostramos las solapas disponibles para verificar el nombre exacto
-        xls = pd.ExcelFile(ARCHIVO_EXCEL, engine='openpyxl')
-        st.write(f"📁 Hojas encontradas en el Excel: {xls.sheet_names}")
-        
-        df_temp = pd.read_excel(ARCHIVO_EXCEL, sheet_name='Carga Tiempos', header=None, engine='openpyxl', dtype=str)
-        st.write(f"📊 Total de filas en la hoja: {len(df_temp)}")
-        
-        fila_nombres_idx = 30
-        fila_clasif_idx = 31
-        
-        resultados_clasif = []
-        
-        if len(df_temp) > fila_clasif_idx:
-            nombres = df_temp.iloc[fila_nombres_idx, 2:8].values  
-            tiempos = df_temp.iloc[fila_clasif_idx, 2:8].values
-            
-            for idx_col, (nom, t_val) in enumerate(zip(nombres, tiempos), start=2):
-                st.write(f"Col {idx_col} -> Piloto: '{nom}' | Tiempo: '{t_val}'")
-                
-                if pd.notna(nom) and str(nom).strip() != "" and str(nom).strip() != "nan":
-                    t_str = str(t_val).strip()
-                    t_seg = None
-                    try:
-                        if ":" in t_str:
-                            partes = t_str.replace(",", ".").split(":")
-                            minutos = float(partes[0])
-                            segundos = float(partes[1])
-                            t_seg = (minutos * 60) + segundos
-                    except:
-                        pass
-                    
-                    if t_seg is None:
-                        try:
-                            t_seg = float(t_val)
-                        except:
-                            pass
-                            
-                    if t_seg is not None:
-                        resultados_clasif.append({
-                            "Piloto": str(nom).strip(), 
-                            "Tiempo": t_seg, 
-                            "Str": t_str
-                        })
-        
-        resultados_clasif = sorted(resultados_clasif, key=lambda x: x["Tiempo"])
-        
-        st.markdown("---")
-        st.subheader("📊 Grilla de Partida - Termas TN")
-        
-        if not resultados_clasif:
-            st.warning("⚠️ El script leyó las celdas pero no encontró valores válidos de pilotos o tiempos.")
-        
-        for idx, res in enumerate(resultados_clasif):
-            puesto = idx + 1
-            color_borde = "#00e676" if puesto == 1 else "#e10600"
-            
-            st.markdown(f"""
-            <div style="background-color: #161925; border-left: 5px solid {color_borde}; border-radius: 8px; padding: 12px 18px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <span style="color: #e10600; font-size: 18px; font-weight: bold; font-family: 'monospace'; margin-right: 15px;">#{puesto}</span>
-                    <span style="color: #ffffff; font-size: 16px; font-weight: bold;">🏎️ {res['Piloto']}</span>
-                </div>
-                <div>
-                    <span style="color: #9fa6b2; font-size: 12px; margin-right: 10px;">TIEMPO:</span>
-                    <span style="color: #ffffff; font-size: 18px; font-weight: bold; font-family: 'monospace';">{res['Str']}</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    except Exception as e:
-        st.error(f"❌ Error detallado de Python: {e}")
