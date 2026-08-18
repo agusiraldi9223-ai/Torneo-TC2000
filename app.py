@@ -195,7 +195,7 @@ if st.sidebar.button("⚔️ Duelo H2H", use_container_width=True):
 if st.sidebar.button("🎮 Simulador de Campeonato", use_container_width=True):
     st.session_state['pagina_activa'] = "Simulador de Campeonato"
 if st.sidebar.button("📈 Estadísticas", use_container_width=True):
-    st.session_state['pagina_activa'] = "Estadísticas"
+    st.session_state['pagina_activa'] = "Estadisticas"
 
 opcion = st.session_state['pagina_activa']
 # Pilotos oficiales en tu orden exacto de columnas del Excel
