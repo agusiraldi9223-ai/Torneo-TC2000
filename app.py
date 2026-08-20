@@ -1959,6 +1959,12 @@ elif opcion == "Estadisticas":
                     # =========================================================================
                     datos_radar = []
 
+# 0. Determinamos el total de fechas reales disputadas en el torneo
+                    # Usamos al primer piloto como referencia para contar cuántas fechas tienen datos en C1
+                    idx_ref = mapa_pilotos[pilotos_torneo[0]]["col_val"]
+                    filas_con_datos = filas_c1.iloc[:, idx_ref].dropna()
+                    total_fechas_torneo = len(filas_con_datos) if len(filas_con_datos) > 0 else 1
+
                     for piloto in pilotos_torneo:
                         if piloto not in mapa_pilotos:
                             continue
@@ -1973,10 +1979,8 @@ elif opcion == "Estadisticas":
                         pos_c1 = [int(x) for x in vals_c1_raw if pd.notna(x) and int(x) in [1, 2, 3, 4]]
                         pos_c2 = [int(x) for x in vals_c2_raw if pd.notna(x) and int(x) in [1, 2, 3, 4]]
                         
-                        # 2. DEFINICIÓN DE DENOMINADORES
-                        # Usamos C1 como base para las fechas del torneo (asumiendo que todos corren C1)
+                        # Denominadores
                         fechas_disputadas = len(pos_c1) if len(pos_c1) > 0 else 1
-                        
                         todas_pos = pos_c1 + pos_c2
                         total_mangas = len(todas_pos) if len(todas_pos) > 0 else 1
                         
@@ -1990,7 +1994,7 @@ elif opcion == "Estadisticas":
                         # 3. CÁLCULO DE MÉTRICAS
                         pct_conversion_pole = (poles_totales / fechas_disputadas) * 100.0
 
-                        # Pole a P1 en C1
+                        # Pole a P1 en C1 (conteo bruto)
                         pole_y_p1_count = 0
                         for idx_f in filas_pole.index:
                             val_pole = pd.to_numeric(df_raw.iloc[idx_f, idx_p], errors='coerce')
@@ -1999,7 +2003,12 @@ elif opcion == "Estadisticas":
                             if val_pole == 1 and val_c1 == 1:
                                 pole_y_p1_count += 1
 
-                        pct_pole_a_p1 = (pole_y_p1_count / poles_totales * 100.0) if poles_totales > 0 else 0.0
+                        # Valor normalizado para el gráfico (proporcional al total de fechas del torneo)
+                        val_norm_pole_p1 = (pole_y_p1_count / total_fechas_torneo) * 100.0 if total_fechas_torneo > 0 else 0.0
+
+                        # Porcentaje interno real (efectividad sobre sus propias poles)
+                        pct_efectividad_real = (pole_y_p1_count / poles_totales * 100.0) if poles_totales > 0 else 0.0
+
                         pct_ritmo = max(0.0, ((5.0 - pos_prom) / 4.0) * 100.0)
                         
                         cant_podios = sum(1 for p in todas_pos if p in [1, 2, 3])
@@ -2020,85 +2029,27 @@ elif opcion == "Estadisticas":
                             "total_mangas": total_mangas,
                             "fechas_disputadas": fechas_disputadas,
                             "pct_conversion_pole": pct_conversion_pole,
-                            "pct_pole_a_p1": pct_pole_a_p1
+                            "val_norm_pole_p1": val_norm_pole_p1,
+                            "pct_efectividad_real": pct_efectividad_real,
+                            "pole_y_p1_count": pole_y_p1_count
                         })
 
-                    for piloto in pilotos_torneo:
-                        if piloto not in mapa_pilotos:
-                            continue
-
-                        idx_v = mapa_pilotos[piloto]["col_val"]
-                        idx_p = mapa_pilotos[piloto]["col_pts"]
-
-                        # Extraer posiciones válidas
-                        vals_c1_raw = pd.to_numeric(filas_c1.iloc[:, idx_v], errors='coerce')
-                        vals_c2_raw = pd.to_numeric(filas_c2.iloc[:, idx_v], errors='coerce')
-
-                        pos_c1 = [int(x) for x in vals_c1_raw if pd.notna(x) and int(x) in [1, 2, 3, 4]]
-                        pos_c2 = [int(x) for x in vals_c2_raw if pd.notna(x) and int(x) in [1, 2, 3, 4]]
-                        
-                        # Lógica corregida para denominadores iguales
-                        fechas_disputadas = len(pos_c1) if len(pos_c1) > 0 else 1
-                        todas_pos = pos_c1 + pos_c2
-                        total_mangas = len(todas_pos) if len(todas_pos) > 0 else 1
-                        
-                        # Cálculo de posición promedio (necesaria para el % Ritmo)
-                        pos_prom = (sum(todas_pos) / total_mangas) if len(todas_pos) > 0 else 2.5
-                        
-                        # Poles totales del piloto
-                        poles_fechas = pd.to_numeric(filas_pole.iloc[:, idx_p], errors='coerce').fillna(0)
-                        poles_totales = int((poles_fechas == 1).sum())
-
-                        # 1. % Conversión Pole
-                        pct_conversion_pole = (poles_totales / fechas_disputadas) * 100.0
-
-                        # 2. % Pole a P1 en C1
-                        pole_y_p1_count = 0
-                        for idx_f in filas_pole.index:
-                            val_pole = pd.to_numeric(df_raw.iloc[idx_f, idx_p], errors='coerce')
-                            idx_c1_asoc = idx_f - 2
-                            val_c1 = pd.to_numeric(df_raw.iloc[idx_c1_asoc, idx_v], errors='coerce') if idx_c1_asoc in df_raw.index else None
-                            if val_pole == 1 and val_c1 == 1:
-                                pole_y_p1_count += 1
-
-                        pct_pole_a_p1 = (pole_y_p1_count / poles_totales * 100.0) if poles_totales > 0 else 0.0
-
-                        # 3. % Ritmo Carrera
-                        pct_ritmo = max(0.0, ((5.0 - pos_prom) / 4.0) * 100.0)
-
-                        # 4. % Podios
-                        cant_podios = sum(1 for p in todas_pos if p in [1, 2, 3])
-                        pct_podios = (cant_podios / total_mangas) * 100.0
-
-                        # 5. % Victorias
-                        cant_victorias = sum(1 for p in todas_pos if p == 1)
-                        pct_victorias = (cant_victorias / total_mangas) * 100.0
-                        datos_radar.append({
-                            "Piloto": piloto,
-                            "pos_prom": pos_prom,
-                            "poles_real": poles_totales,
-                            "pct_ritmo": pct_ritmo,
-                            "pct_podios": pct_podios,
-                            "cant_podios": cant_podios,
-                            "cant_victorias": cant_victorias,
-                            "pct_victorias": pct_victorias,
-                            "total_mangas": total_mangas,
-                            "fechas_disputadas": fechas_disputadas,
-                            "pct_conversion_pole": pct_conversion_pole,
-                            "pct_pole_a_p1": pct_pole_a_p1
-                        })
+                    # Generación de filas para Plotly
                     filas_plotly = []
                     for d in datos_radar:
                         piloto = d["Piloto"]
 
                         metricas = [
-                            ("% Pole a P1 (C1)", d["pct_pole_a_p1"], f"{d['pct_pole_a_p1']:.1f}%"),
+                            (
+                                "% Pole a P1 (C1)", 
+                                d["val_norm_pole_p1"], 
+                                f"Real: {d['pct_efectividad_real']:.1f}% ({d['pole_y_p1_count']}/{d['poles_real']} poles) | Escala Torneo: {d['val_norm_pole_p1']:.1f}%"
+                            ),
                             ("% Podios", d["pct_podios"], f"{d['pct_podios']:.1f}% ({d['cant_podios']}/{d['total_mangas']} mangas)"),
                             ("% Victorias", d["pct_victorias"], f"{d['pct_victorias']:.1f}% ({d['cant_victorias']}/{d['total_mangas']} victorias)"),
                             ("% Conversión Pole", d["pct_conversion_pole"], f"{d['pct_conversion_pole']:.1f}% ({d['poles_real']}/{d['fechas_disputadas']} fechas)"),
                             ("% Ritmo Carrera", d["pct_ritmo"], f"P{d['pos_prom']:.1f} Prom.")
                         ]
-
                         for eje, val_real_pct, txt_hover in metricas:
                             filas_plotly.append({
                                 "Piloto": piloto,
@@ -2185,15 +2136,15 @@ elif opcion == "Estadisticas":
                         # Renderizado del gráfico
                         st.plotly_chart(fig_radar, use_container_width=True, key="radar_final_correcto")
 
-                        # Explicación desplegable debajo del gráfico
-                        with st.expander("ℹ️ ¿Qué significa cada métrica del gráfico radar?"):
-                            st.markdown("""
-                            * **% Pole a P1 (C1):** Efectividad para convertir una Pole Position en victoria directa en la Carrera 1.
-                            * **% Podios:** Porcentaje de mangas disputadas (C1 y C2) en las que el piloto finalizó dentro del Top 3 (P1, P2 o P3).
-                            * **% Victorias:** Porcentaje de mangas ganadas (P1) sobre el total de competencias disputadas.
-                            * **% Conversión Pole:** Porcentaje de fechas disputadas en las que el piloto logró quedarse con la Pole Position.
-                            * **% Ritmo Carrera:** Desempeño según posición promedio final en todas las mangas (P1 = 100%, P4 = 25%).
-                            """)
+                    # Explicación desplegable debajo del gráfico
+                    with st.expander("ℹ️ ¿Qué significa cada métrica del gráfico radar?"):
+                        st.markdown("""
+                        * **% Pole a P1 (C1):** Victorias logradas desde la Pole Position en Carrera 1 expresadas como porcentaje del **total de fechas del torneo** (el hover muestra además la efectividad real sobre sus propias poles).
+                        * **% Podios:** Porcentaje de mangas disputadas (C1 y C2) en las que el piloto finalizó dentro del Top 3 (P1, P2 o P3).
+                        * **% Victorias:** Porcentaje de mangas ganadas (P1) sobre el total de competencias disputadas.
+                        * **% Conversión Pole:** Porcentaje de fechas disputadas en las que el piloto logró quedarse con la Pole Position.
+                        * **% Ritmo Carrera:** Desempeño según posición promedio final en todas las mangas (P1 = 100%, P4 = 25%).
+                        """)
 
                 except Exception as e_radar:
                     st.warning(f"No se pudo cargar el radar multivariable: {e_radar}")
